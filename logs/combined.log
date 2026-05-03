@@ -320,3 +320,33 @@
 {"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/wallet/balance","timestamp":"2026-05-03 19:39:42"}
 {"level":"\u001b[32minfo\u001b[39m","message":"DELETE /api/v1/ads/69f7478e23efb109e863dfba/hard","timestamp":"2026-05-03 19:40:41"}
 {"level":"\u001b[32minfo\u001b[39m","message":"Ad 69f7478e23efb109e863dfba permanently deleted by Adysah","timestamp":"2026-05-03 19:40:42"}
+{"level":"\u001b[32minfo\u001b[39m","message":"MongoDB connected","timestamp":"2026-05-03 22:51:43"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi P2P backend running on port 5000","timestamp":"2026-05-03 22:51:43"}
+{"level":"\u001b[32minfo\u001b[39m","message":"POST /api/v1/auth/pi","timestamp":"2026-05-03 22:55:30"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pioneer logged in: Adysah (uid=e5028827-52c3-415b-b03e-7d5352576004)","timestamp":"2026-05-03 22:55:32"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 22:55:33"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 22:55:33"}
+{"level":"\u001b[32minfo\u001b[39m","message":"MongoDB connected","timestamp":"2026-05-03 23:27:06"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi P2P backend running on port 5000","timestamp":"2026-05-03 23:27:06"}
+{"level":"\u001b[32minfo\u001b[39m","message":"MongoDB connected","timestamp":"2026-05-03 23:28:46"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi P2P backend running on port 5000","timestamp":"2026-05-03 23:28:46"}
+{"level":"\u001b[32minfo\u001b[39m","message":"POST /api/v1/auth/pi","timestamp":"2026-05-03 23:30:32"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi token verified for uid=e5028827-52c3-415b-b03e-7d5352576004 username=Adysah","timestamp":"2026-05-03 23:30:34"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pioneer logged in: Adysah (uid=e5028827-52c3-415b-b03e-7d5352576004)","timestamp":"2026-05-03 23:30:35"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 23:30:35"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 23:30:36"}
+{"code":"ECONNREFUSED","hostname":"_mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net","level":"\u001b[31merror\u001b[39m","message":"MongoDB connection error: querySrv ECONNREFUSED _mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net","stack":"Error: querySrv ECONNREFUSED _mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net\n    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:275:17)","syscall":"querySrv","timestamp":"2026-05-03 23:34:12"}
+{"code":"ECONNREFUSED","hostname":"_mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net","level":"\u001b[31merror\u001b[39m","message":"MongoDB connection error: querySrv ECONNREFUSED _mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net","stack":"Error: querySrv ECONNREFUSED _mongodb._tcp.mapcap-ipo.ilu89wl.mongodb.net\n    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:275:17)","syscall":"querySrv","timestamp":"2026-05-03 23:34:41"}
+{"level":"\u001b[32minfo\u001b[39m","message":"MongoDB connected","timestamp":"2026-05-03 23:39:28"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi P2P backend running on port 5000","timestamp":"2026-05-03 23:39:28"}
+{"level":"\u001b[32minfo\u001b[39m","message":"POST /api/v1/auth/pi","timestamp":"2026-05-03 23:41:43"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pi token verified for uid=e5028827-52c3-415b-b03e-7d5352576004 username=Adysah","timestamp":"2026-05-03 23:41:44"}
+{"level":"\u001b[32minfo\u001b[39m","message":"Pioneer logged in: Adysah (uid=e5028827-52c3-415b-b03e-7d5352576004)","timestamp":"2026-05-03 23:41:45"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 23:41:45"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads","timestamp":"2026-05-03 23:41:45"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads/my","timestamp":"2026-05-03 23:41:51"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/wallet/balance","timestamp":"2026-05-03 23:41:51"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/auth/payment-methods","timestamp":"2026-05-03 23:41:51"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/wallet/balance","timestamp":"2026-05-03 23:41:51"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/ads/my","timestamp":"2026-05-03 23:41:51"}
+{"level":"\u001b[32minfo\u001b[39m","message":"GET /api/v1/auth/payment-methods","timestamp":"2026-05-03 23:41:51"}

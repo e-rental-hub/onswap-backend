@@ -17,17 +17,16 @@
  */
 
 import axios from "axios";
-import { config } from "../config";
 import { PiTransferResult } from "../types";
-import { logger } from "../config/loggingConfig";
+import { logger } from "../utils/logger";
 
 // ── Platform API client ───────────────────────────────────────────────────
 
 const platformApiClient = axios.create({
-  baseURL: config.piNetworkApiBase,
+  baseURL: process.env.PLATFORM_API_URL || "https://api.minepi.com",
   timeout: 20_000,
   headers: {
-    Authorization: `Key ${config.piApiKey}`,
+    Authorization: `Key ${process.env.PI_API_KEY}`,
     "Content-Type": "application/json",
   },
 });
@@ -68,7 +67,7 @@ function logPlatformError(err: unknown, ctx: string): void {
       data:   axErr.response?.data,
     });
   } else {
-    console.error(`[Pi Platform] ${ctx}`, err);
+    logger.error(`[Pi Platform] ${ctx}`, err);
   }
 }
 
@@ -237,10 +236,10 @@ export async function transferA2U(
     }
 
     const res = await axios.post(
-      `${config.escrowPiApiBase}/transfer`,
+      `${process.env.ESCROW_PI_API_BASE}/transfer`,
       { toAddress, amount, memo },
       {
-        headers: { Authorization: `Key ${config.escrowPiApiKey}` },
+        headers: { Authorization: `Key ${process.env.ESCROW_PI_API_KEY}` },
         timeout: 20_000,
       }
     );
