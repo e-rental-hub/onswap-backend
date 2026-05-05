@@ -1,93 +1,88 @@
-import mongoose, { Document, Schema } from 'mongoose';
-import { PaymentMethod } from './Ad';
+import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type OrderStatus =
-  | 'pending'
-  | 'payment_pending'
-  | 'payment_sent'
-  | 'escrow_locked'
-  | 'completed'
-  | 'disputed'
-  | 'cancelled'
-  | 'refunded';
-
-export interface IEscrow {
-  piAmount: number;
-  lockedAt?: Date;
-  releasedAt?: Date;
-  txId?: string;
-  status: 'pending' | 'locked' | 'released' | 'refunded';
-}
+  | 'payment_pending'   // buyer needs to send Naira
+  | 'payment_sent'      // buyer confirmed payment; seller to verify & release
+  | 'completed'         // seller released Pi
+  | 'disputed'          // either party raised a dispute
+  | 'cancelled'         // cancelled before payment sent
+  | 'refunded';         // Pi returned after dispute resolution
 
 export interface IMessage {
-  sender: mongoose.Types.ObjectId;
-  content: string;
+  sender:    Types.ObjectId;
+  content:   string;
   timestamp: Date;
-  type: 'text' | 'system' | 'payment_proof';
+  type:      'text' | 'system' | 'payment_proof';
   imageUrl?: string;
 }
 
-export interface IOrder extends Document {
-  ad: mongoose.Types.ObjectId;
-  buyer: mongoose.Types.ObjectId;
-  seller: mongoose.Types.ObjectId;
-  piAmount: number;
-  nairaAmount: number;
-  pricePerPi: number;
-  currency: string;
-  paymentMethod: PaymentMethod;
-  status: OrderStatus;
-  escrow: IEscrow;
-  messages: IMessage[];
-  paymentDeadline?: Date;
-  completedAt?: Date;
-  cancelledAt?: Date;
-  cancelReason?: string;
-  disputeReason?: string;
-  paymentProofUrl?: string;
-  createdAt: Date;
-  updatedAt: Date;
+export interface IEscrow {
+  piAmount:    number;
+  status:      'pending' | 'locked' | 'released' | 'refunded';
+  lockedAt?:   Date;
+  releasedAt?: Date;
+  txId?:       string;
 }
 
-const EscrowSchema = new Schema<IEscrow>({
-  piAmount: { type: Number, required: true },
-  lockedAt: Date,
-  releasedAt: Date,
-  txId: String,
-  status: { type: String, enum: ['pending', 'locked', 'released', 'refunded'], default: 'pending' },
-});
+export interface IOrder extends Document<Types.ObjectId> {
+  ad:            Types.ObjectId;
+  buyer:         Types.ObjectId;
+  seller:        Types.ObjectId;
+  piAmount:      number;
+  nairaAmount:   number;
+  pricePerPi:    number;
+  currency:      string;
+  paymentMethod: string;
+  status:        OrderStatus;
+  escrow:        IEscrow;
+  messages:      IMessage[];
+  paymentDeadline?: Date;
+  completedAt?:  Date;
+  cancelledAt?:  Date;
+  cancelReason?: string;
+  disputeReason?: string;
+  createdAt:     Date;
+  updatedAt:     Date;
+}
 
 const MessageSchema = new Schema<IMessage>({
-  sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  content: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-  type: { type: String, enum: ['text', 'system', 'payment_proof'], default: 'text' },
-  imageUrl: String,
+  sender:    { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  content:   { type: String, required: true },
+  timestamp: { type: Date, default: () => new Date() },
+  type:      { type: String, enum: ['text', 'system', 'payment_proof'], default: 'text' },
+  imageUrl:  String,
 });
+
+const EscrowSchema = new Schema<IEscrow>({
+  piAmount:    { type: Number, required: true },
+  status:      { type: String, enum: ['pending', 'locked', 'released', 'refunded'], default: 'pending' },
+  lockedAt:    Date,
+  releasedAt:  Date,
+  txId:        String,
+}, { _id: false });
 
 const OrderSchema = new Schema<IOrder>(
   {
-    ad: { type: Schema.Types.ObjectId, ref: 'Ad', required: true },
-    buyer: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    seller: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    piAmount: { type: Number, required: true, min: 0 },
-    nairaAmount: { type: Number, required: true, min: 0 },
-    pricePerPi: { type: Number, required: true },
-    currency: { type: String, default: 'NGN' },
-    paymentMethod: { type: String, required: true },
+    ad:           { type: Schema.Types.ObjectId, ref: 'Ad',   required: true },
+    buyer:        { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    seller:       { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    piAmount:     { type: Number, required: true, min: 0 },
+    nairaAmount:  { type: Number, required: true, min: 0 },
+    pricePerPi:   { type: Number, required: true },
+    currency:     { type: String, default: 'NGN' },
+    paymentMethod:{ type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'payment_pending', 'payment_sent', 'escrow_locked', 'completed', 'disputed', 'cancelled', 'refunded'],
-      default: 'pending',
+      enum: ['payment_pending', 'payment_sent', 'completed', 'disputed', 'cancelled', 'refunded'],
+      default: 'payment_pending',
     },
-    escrow: { type: EscrowSchema, required: true },
-    messages: [MessageSchema],
+    escrow:          { type: EscrowSchema, required: true },
+    messages:        [MessageSchema],
     paymentDeadline: Date,
-    completedAt: Date,
-    cancelledAt: Date,
-    cancelReason: String,
-    disputeReason: String,
-    paymentProofUrl: String,
+    completedAt:     Date,
+    cancelledAt:     Date,
+    cancelReason:    String,
+    disputeReason:   String,
   },
   { timestamps: true }
 );
