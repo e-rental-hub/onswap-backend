@@ -19,14 +19,16 @@
 import axios from "axios";
 import { PiTransferResult } from "../types";
 import { logger } from "../utils/logger";
+import StellarSdk from 'stellar-sdk';
+import { config } from "../config";
 
 // ── Platform API client ───────────────────────────────────────────────────
 
 const platformApiClient = axios.create({
-  baseURL: process.env.PLATFORM_API_URL || "https://api.minepi.com",
+  baseURL: config.piNetworkApiBase || "https://api.minepi.com",
   timeout: 20_000,
   headers: {
-    Authorization: `Key ${process.env.PI_API_KEY}`,
+    Authorization: `Key ${config.piApiKey}`,
     "Content-Type": "application/json",
   },
 });
@@ -220,60 +222,6 @@ export async function handleIncompletePayment(
   }
 }
 
-// ── A2UaaS withdraw (App wallet → User wallet) ────────────────────────────
-// Uses EscrowPi external API (separate from Pi Platform).
-
-export async function transferA2U(
-  pioneerUid: string,
-  toAddress:  string,
-  amount:     number,
-  memo:       string
-): Promise<PiTransferResult> {
-  try {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[EscrowPi A2U stub] → ${pioneerUid} (${toAddress}): ${amount}π  memo="${memo}"`);
-      return { success: true, txId: `stub_a2u_${Date.now()}` };
-    }
-
-    const res = await axios.post(
-      `${process.env.ESCROW_PI_API_BASE}/transfer`,
-      { toAddress, amount, memo },
-      {
-        headers: { Authorization: `Key ${process.env.ESCROW_PI_API_KEY}` },
-        timeout: 20_000,
-      }
-    );
-    const txId: string = res.data?.txId ?? res.data?.transaction_id;
-    console.log(`[EscrowPi A2U] ${pioneerUid}: ${amount}π sent, txId=${txId}`);
-    return { success: true, txId };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[EscrowPi A2U] failed:", message);
-    return { success: false, error: message };
-  }
-}
-
-// ── MapCap token vest transfer ────────────────────────────────────────────
-
-export async function transferMapCap(
-  toAddress: string,
-  amount:    number,
-  memo:      string
-): Promise<PiTransferResult> {
-  try {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[MapCap Transfer stub] → ${toAddress}: ${amount} MapCap  memo="${memo}"`);
-      return { success: true, txId: `stub_mc_${Date.now()}` };
-    }
-
-    // TODO: Pi Network on-chain token transfer when API is available
-    throw new Error("MapCap token transfer not yet supported in production");
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[MapCap Transfer] failed:", message);
-    return { success: false, error: message };
-  }
-}
 
 const PI_API_BASE = 'https://api.minepi.com';
 
@@ -289,7 +237,7 @@ export interface PiMeResponse {
  */
 export async function verifyPiToken(accessToken: string): Promise<PiMeResponse> {
   try {
-    const response = await axios.get<PiMeResponse>(`${PI_API_BASE}/v2/me`, {
+    const response = await axios.get<PiMeResponse>(`${config.piNetworkApiBase}/v2/me`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -315,4 +263,120 @@ export async function verifyPiToken(accessToken: string): Promise<PiMeResponse> 
     logger.error('Pi /me request error:', err);
     throw new Error('Could not verify Pi identity — please try again');
   }
+}
+
+const piServer = new StellarSdk.Horizon.Server('https://api.testnet.minepi.com');
+
+export const createA2UPayment = (
+  recipientPiUid: string,
+  amount: number, 
+  memo: string = "Memo for a2u payment", 
+  metadata: any = {}, 
+) => {
+  const body =  {amount, memo, metadata, uid: recipientPiUid};
+
+  let paymentIdentifier;
+  let recipientAddress;
+
+  try {
+    platformApiClient.post(`/v2/payments`, body,).then(response => {
+      paymentIdentifier = response.data.identifier;
+      recipientAddress = response.data.recipient;
+    });
+
+    if (!recipientAddress || !paymentIdentifier) {
+      return {
+        success: false,
+        error: "Failed to create A2U payment"
+      }
+    }
+    
+    return {
+      success: true,
+      data: {recipientAddress, paymentIdentifier}
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      error: "Error creating A2U payment"
+    }
+  }
+}
+
+export const loadAppAccount = (walletAddress: string) => {
+  try {
+    const appAccount = piServer.loadAccount(walletAddress);
+
+    const baseFee = piServer.fetchBaseFee();
+    if (!appAccount || !baseFee){
+      return {
+        success: false,
+        error: "failed to load Pi server"
+      }
+    }
+    return {
+      success: true,
+      data: {appAccount, baseFee}
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      error: "Error creating A2U payment"
+    }
+  }
+}
+
+export const buildA2Utransaction = (
+  recipientAddress: string,
+  paymentIdentifier: string,
+  mySecretSeed: string = "S_YOUR_SECRET_SEED",
+  amount: number
+) => {
+  // create a payment operation which will be wrapped in a transaction
+  let payment = StellarSdk.Operation.payment({
+    destination: recipientAddress,
+    asset: StellarSdk.Asset.native(),
+    amount: amount.toString()
+  });
+
+  const accountResult = loadAppAccount(config.appWalletAddress || "");
+
+  // 180 seconds timeout
+  const timebounds = piServer.fetchTimebounds(180);
+
+  let transaction = new StellarSdk.TransactionBuilder(accountResult.data?.appAccount, {
+    fee: accountResult.data?.baseFee,
+    networkPassphrase: "Pi Testnet", // use "Pi Network" for mainnet transaction
+    timebounds: timebounds
+  })
+  .addOperation(payment)
+  // IMPORTANT! DO NOT forget to include the payment id as memo
+  .addMemo(StellarSdk.Memo.text(paymentIdentifier));
+  
+  transaction = transaction.build();
+
+  // See the "Obtain your wallet's private key" section above to get this.
+  // And DON'T HARDCODE IT, treat it like a production secret.
+  // const mySecretSeed = "S_YOUR_SECRET_SEED"; // NEVER expose your secret seed to public, starts with S
+  const myKeypair = StellarSdk.Keypair.fromSecret(mySecretSeed);
+  transaction.sign(myKeypair);
+
+  let txid = piServer.submitTransaction(transaction);
+
+  // check if the response status is 200 
+  platformApiClient.post(`/v2/payments/${paymentIdentifier}/complete`, {txid})
+  .then(response => {
+    if (response.status === 200) {
+      return {
+        success: true,
+        data: {txid, paymentId: paymentIdentifier  }
+      }
+    }
+  }).catch( error => {
+      return {
+        success: false,
+        error: "Error building A2U transaction"
+      }
+    }
+  );
 }

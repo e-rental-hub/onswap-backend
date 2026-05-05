@@ -50,7 +50,7 @@ const WalletTransactionSchema = new Schema<IWalletTransaction>(
     balanceAfter:  { type: Number, required: true },
     status:        { type: String, enum: ['pending', 'confirmed', 'failed'], default: 'pending' },
 
-    piPaymentId: { type: String, sparse: true },
+    piPaymentId: { type: String },
     piTxId:      { type: String, index: true, sparse: true },
 
     orderId: { type: Schema.Types.ObjectId, ref: 'Order', sparse: true },
