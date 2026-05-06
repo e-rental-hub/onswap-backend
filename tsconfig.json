@@ -14,6 +14,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/**/*", "scripts/appWalletService.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

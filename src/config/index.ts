@@ -12,6 +12,7 @@ export const config = {
   mongoUri: process.env.MONGO_URI ?? "mongodb://localhost:27017/mapcap",
   nodeEnv: process.env.NODE_ENV ?? "development",
   jwtSecret: process.env.JWT_SECRET ?? "",
+  jwtExpires: process.env.JWT_EXPIRES || '24h',
 
   // Pi Network SDK / escrow service endpoints (set in .env)
   piApiKey: process.env.PI_API_KEY ?? "CHANGEME",
