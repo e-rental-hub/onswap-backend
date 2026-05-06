@@ -20,6 +20,25 @@ const POPULATE_ORDER = [
   { path: 'ad',     select: 'type paymentDetails paymentWindow terms autoReply paymentMethods' },
 ];
 
+/**
+ * Extract a plain string ID from a field that may be either a raw ObjectId
+ * (before populate) or a full populated Mongoose document (after populate).
+ *
+ * Problem: after .populate(), `order.buyer` is a User document. Calling
+ * `.toString()` on a Document returns "[object Object]", not the ID string.
+ * We must use `._id.toString()` on populated documents, but `.toString()`
+ * on raw ObjectIds. This helper handles both cases uniformly.
+ */
+function toId(field: unknown): string {
+  if (field == null) return '';
+  // Populated document — has _id property
+  if (typeof field === 'object' && '_id' in (field as object)) {
+    return (field as { _id: { toString(): string } })._id.toString();
+  }
+  // Raw ObjectId or string
+  return String(field);
+}
+
 // ─── POST /orders ─────────────────────────────────────────────────────────────
 //
 // Creates a new P2P order against an existing ad.
@@ -213,15 +232,20 @@ export const getOrders = async (req: AuthRequest, res: Response): Promise<void> 
 export const getOrderById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const order  = await Order.findById(req.params.id).populate(POPULATE_ORDER);
 
-    if (!order) { res.status(404).json({ success: false, message: 'Order not found' }); return; }
+    // Fetch WITHOUT populate first so buyer/seller are still raw ObjectIds.
+    // Calling .toString() on a populated Document returns "[object Object]",
+    // not the ID — that is what caused the spurious 403.
+    const raw = await Order.findById(req.params.id);
+    if (!raw) { res.status(404).json({ success: false, message: 'Order not found' }); return; }
 
     const isParticipant =
-      order.buyer.toString()  === userId ||
-      order.seller.toString() === userId;
+      raw.buyer.toString()  === userId ||
+      raw.seller.toString() === userId;
     if (!isParticipant) { res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
 
+    // Now safe to populate for the response
+    const order = await raw.populate(POPULATE_ORDER);
     res.json({ success: true, order });
   } catch (err) {
     logger.error('getOrderById error:', err);
@@ -245,8 +269,9 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
 
     if (!order) { await session.abortTransaction(); res.status(404).json({ success: false, message: 'Order not found' }); return; }
 
-    const isBuyer  = (order.buyer as unknown as { _id: mongoose.Types.ObjectId })._id.toString() === userId;
-    const isSeller = (order.seller as unknown as { _id: mongoose.Types.ObjectId })._id.toString() === userId;
+    // Use toId() — these fields are populated so ._id must be used, not .toString() directly
+    const isBuyer  = toId(order.buyer)  === userId;
+    const isSeller = toId(order.seller) === userId;
     if (!isBuyer && !isSeller) { await session.abortTransaction(); res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
 
     const sellerId  = (order.seller as unknown as { _id: mongoose.Types.ObjectId; piUid: string });
@@ -380,8 +405,8 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
     if (!order) { res.status(404).json({ success: false, message: 'Order not found' }); return; }
 
     const isParticipant =
-      order.buyer.toString()  === userId ||
-      order.seller.toString() === userId;
+      toId(order.buyer)  === userId ||
+      toId(order.seller) === userId;
     if (!isParticipant) { res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
 
     if (['completed', 'cancelled'].includes(order.status)) {

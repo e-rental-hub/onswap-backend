@@ -1,18 +1,18 @@
 import { Request, Response } from 'express';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import type { StringValue } from 'ms';
-import mongoose from 'mongoose';
 import { User, IPaymentMethodDetailDoc } from '../models/User';
 import { verifyPiToken } from '../services/piNetwork.service';
 import { AuthRequest } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pi-p2p-secret-change-me';
+const JWT_SECRET = config.jwtSecret || 'pi-p2p-secret-change-me';
 // Cast to StringValue so TypeScript accepts the expiresIn option correctly.
 // Valid formats: '7d', '24h', '60m', '3600s' — anything the `ms` library understands.
-const JWT_EXPIRES = (process.env.JWT_EXPIRES || '24h') as StringValue;
+const JWT_EXPIRES = (config.jwtExpires || '24h') as StringValue;
 
 const signToken = (id: string, piUid: string, username: string): string => {
   const opts: SignOptions = { expiresIn: JWT_EXPIRES };
