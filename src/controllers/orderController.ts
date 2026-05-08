@@ -10,12 +10,14 @@ import {
   refundEscrow,
   reserveForAd,
 } from '../services/walletService';
-import { logger } from '../utils/logger';
+import { logger }        from '../utils/logger';
+import { releaseToUser } from '../services/piNetwork.service';
+import { config } from '../config';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const POPULATE_ORDER = [
-  { path: 'buyer',  select: 'username displayName rating totalTrades completedTrades kycVerified piBalance' },
+  { path: 'buyer',  select: 'username displayName rating totalTrades completedTrades kycVerified piBalance piUid' },
   { path: 'seller', select: 'username displayName rating totalTrades completedTrades kycVerified' },
   { path: 'ad',     select: 'type paymentDetails paymentWindow terms autoReply paymentMethods' },
 ];
@@ -60,8 +62,8 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
   session.startTransaction();
   try {
     const userId                         = req.user!.id;
-    const { adId, piAmount, paymentMethod } = req.body as {
-      adId: string; piAmount: number; paymentMethod: string;
+    const { adId, piAmount, paymentMethod, buyerWalletAddress } = req.body as {
+      adId: string; piAmount: number; paymentMethod: string; buyerWalletAddress: string;
     };
 
     const ad = await Ad.findById(adId).session(session);
@@ -71,7 +73,7 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    if (ad.creator.toString() === userId) {
+    if (config.nodeEnv === 'production' && ad.creator.toString() === userId) {
       await session.abortTransaction();
       res.status(400).json({ success: false, message: 'Cannot trade with your own ad' });
       return;
@@ -144,6 +146,7 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
         pricePerPi:    ad.pricePerPi,
         currency:      ad.currency,
         paymentMethod,
+        buyerWalletAddress,
         status:         'payment_pending',
         escrow: {
           piAmount,
@@ -288,32 +291,97 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         systemMsg = '✅ Buyer confirmed payment. Seller — verify receipt and release Pi.';
         break;
 
-      case 'release_escrow':
+      case 'release_escrow': {
         if (!isSeller) { await session.abortTransaction(); res.status(403).json({ success: false, message: 'Only seller can release escrow' }); return; }
         if (order.status !== 'payment_sent') { await session.abortTransaction(); res.status(400).json({ success: false, message: 'Awaiting buyer payment confirmation first' }); return; }
 
-        order.status        = 'completed';
-        order.escrow.status = 'released';
-        order.escrow.releasedAt = new Date();
-        order.completedAt   = new Date();
-        systemMsg = '🎉 Pi released! Trade completed successfully.';
+        // Buyer's wallet address was captured at order creation — use it directly.
+        // No API lookup needed; address was validated (Stellar G... format) at order time.
+        const buyerWalletAddr = (order as unknown as { buyerWalletAddress?: string }).buyerWalletAddress;
+        if (!buyerWalletAddr) {
+          await session.abortTransaction();
+          res.status(400).json({ success: false, message: 'Buyer wallet address not on this order — cannot release Pi' });
+          return;
+        }
 
-        // Release Pi from seller's lockedBalance (Pi leaves app to buyer)
-        await releaseEscrow(
-          session,
-          sellerId._id,
-          sellerId.piUid,
+        // Abort the DB session before the on-chain call.
+        // Stellar transactions cannot be rolled back, so we commit the DB
+        // state separately once we know the transfer succeeded.
+        await session.abortTransaction();
+        session.endSession();
+
+        const releaseResult = await releaseToUser(
+          buyerWalletAddr,
           order.piAmount,
-          order._id as mongoose.Types.ObjectId,
+          order._id.toString(),
         );
 
-        // Update user trade stats
-        await User.findByIdAndUpdate(order.buyer,  { $inc: { totalTrades: 1, completedTrades: 1 } }, { session });
-        await User.findByIdAndUpdate(order.seller, { $inc: { totalTrades: 1, completedTrades: 1 } }, { session });
+        if (!releaseResult.success) {
+          logger.error(`release_escrow: on-chain transfer failed for order ${order._id}`, releaseResult);
+          res.status(502).json({
+            success:          false,
+            message:          `Pi transfer failed: ${releaseResult.error ?? 'Unknown error'}. The order is NOT marked complete. Please retry or contact support.`,
+            recipientAddress: releaseResult.recipientAddress,
+            txid:             releaseResult.txid,
+          });
+          return;
+        }
 
-        // Increment ad completed orders
-        if (ad) await Ad.findByIdAndUpdate(ad._id, { $inc: { completedOrders: 1 } }, { session });
-        break;
+        // ── Update DB now that the on-chain transfer succeeded ──────────────
+        const dbSession = await mongoose.startSession();
+        dbSession.startTransaction();
+        try {
+          const freshOrder = await Order.findById(order._id).session(dbSession);
+          if (!freshOrder) throw new Error('Order disappeared after on-chain transfer');
+
+          freshOrder.status           = 'completed';
+          freshOrder.escrow.status    = 'released';
+          freshOrder.escrow.releasedAt = new Date();
+          freshOrder.escrow.txId      = releaseResult.txid; // Stellar transaction hash
+          freshOrder.completedAt      = new Date();
+          freshOrder.messages.push({
+            sender:    new mongoose.Types.ObjectId(userId),
+            content:   `🎉 Pi released on-chain! txid: ${releaseResult.txid}`,
+            type:      'system',
+            timestamp: new Date(),
+          });
+          await freshOrder.save({ session: dbSession });
+
+          // Release from seller's lockedBalance (Pi has left the app)
+          await releaseEscrow(
+            dbSession,
+            sellerId._id,
+            sellerId.piUid,
+            order.piAmount,
+            order._id as mongoose.Types.ObjectId,
+            releaseResult.txid,
+          );
+
+          await User.findByIdAndUpdate(order.buyer,  { $inc: { totalTrades: 1, completedTrades: 1 } }, { session: dbSession });
+          await User.findByIdAndUpdate(order.seller, { $inc: { totalTrades: 1, completedTrades: 1 } }, { session: dbSession });
+          if (ad) await Ad.findByIdAndUpdate(ad._id, { $inc: { completedOrders: 1 } }, { session: dbSession });
+
+          await dbSession.commitTransaction();
+
+          await freshOrder.populate(POPULATE_ORDER);
+          logger.info(`Order ${order._id} completed — txid=${releaseResult.txid}`);
+          res.json({ success: true, order: freshOrder });
+        } catch (dbErr) {
+          await dbSession.abortTransaction();
+          logger.error('release_escrow: DB update failed after successful on-chain transfer', dbErr);
+          // The Pi transfer succeeded but DB update failed. Log prominently for manual reconciliation.
+          logger.error(`CRITICAL: Order ${order._id} Pi sent (txid=${releaseResult.txid ?? 'unknown'}) but DB not updated. Manual fix required.`);
+          res.status(500).json({
+            success: false,
+            message: 'Pi was sent on-chain but the order record could not be updated. Please contact support with your order ID.',
+            txid: releaseResult.txid,
+          });
+        } finally {
+          dbSession.endSession();
+        }
+        // Return early — we've already sent the response above
+        return;
+      }
 
       case 'cancel':
         if (order.status === 'completed' || order.status === 'disputed') {

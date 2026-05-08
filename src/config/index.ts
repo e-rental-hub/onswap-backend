@@ -16,11 +16,12 @@ export const config = {
 
   // Pi Network SDK / escrow service endpoints (set in .env)
   piApiKey: process.env.PI_API_KEY ?? "CHANGEME",
-  piNetworkApiBase: process.env.PI_NETWORK_API_BASE ?? "https://api.minepi.com",
+  piNetworkApiBase: process.env.PLATFORM_API_URL ?? "https://api.minepi.com",
+  piNetwork: process.env.PI_NETWORK ?? "testnet",
 
   // MapCap IPO wallet (Pi address controlled by Map of Pi)
-  appWalletAddress: process.env.IPO_WALLET_ADDRESS ?? "MAPCAP_IPO_WALLET",
-  appWalletSecretSeed: process.env.IPO_WALLET_SECRET_SEED ?? "",
+  appWalletAddress: process.env.WALLET_PUBLIC_SEED ?? "ONSWAP_WALLET_ADDRESS",
+  appWalletSecretSeed: process.env.WALLET_PRIVATE_SEED ?? "ONSWAP_SECRET_SEED",
+  appWalletPassphrase: process.env.WALLET_PASSPHRASE
   
-  mapOfPiWalletAddress: process.env.MAPOFPI_WALLET_ADDRESS ?? "MAPOFPI_WALLET",
 } as const;

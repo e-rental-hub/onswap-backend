@@ -39,10 +39,15 @@ export interface IOrder extends Document<Types.ObjectId> {
   paymentDeadline?: Date;
   completedAt?:  Date;
   cancelledAt?:  Date;
-  cancelReason?: string;
-  disputeReason?: string;
-  createdAt:     Date;
-  updatedAt:     Date;
+  cancelReason?:        string;
+  disputeReason?:       string;
+  /**
+   * Buyer's on-chain Stellar public key — provided at order creation.
+   * Used by the seller to release Pi via A2U transfer.
+   */
+  buyerWalletAddress:   string;
+  createdAt:            Date;
+  updatedAt:            Date;
 }
 
 const MessageSchema = new Schema<IMessage>({
@@ -81,8 +86,9 @@ const OrderSchema = new Schema<IOrder>(
     paymentDeadline: Date,
     completedAt:     Date,
     cancelledAt:     Date,
-    cancelReason:    String,
-    disputeReason:   String,
+    cancelReason:      String,
+    disputeReason:     String,
+    buyerWalletAddress: { type: String, required: true, trim: true },
   },
   { timestamps: true }
 );

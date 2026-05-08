@@ -117,9 +117,18 @@ export const updateAdSchema = z.object({
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export const createOrderSchema = z.object({
-  adId:          z.string().min(1),
-  piAmount:      z.number().positive(),
-  paymentMethod: z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
+  adId:               z.string().min(1),
+  piAmount:           z.number().positive(),
+  paymentMethod:      z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
+  /**
+   * Buyer's on-chain Pi/Stellar wallet address (starts with G...).
+   * Validated as a 56-character Stellar public key.
+   * Used by seller to release Pi via A2U transfer on trade completion.
+   */
+  buyerWalletAddress: z.string()
+    .min(56, 'Pi wallet address must be 56 characters')
+    .max(56, 'Pi wallet address must be 56 characters')
+    .regex(/^G[A-Z2-7]{55}$/, 'Invalid Pi wallet address — must start with G followed by 55 uppercase letters/numbers'),
 });
 
 export const sendMessageSchema = z.object({
