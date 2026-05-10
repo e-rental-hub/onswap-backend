@@ -18,8 +18,8 @@
 /.next/
 /out/
 .next-*
-.dist/*
-/.dist
+/dist
+/logs
 
 # production
 /build
