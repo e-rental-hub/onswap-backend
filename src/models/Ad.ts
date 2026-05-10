@@ -34,6 +34,8 @@ export interface IAd extends Document<Types.ObjectId> {
    * 0 for buy ads.
    */
   reservedPi:      number;
+  /** Snapshot of buyer's Pi wallet for buy ads — stored so counterparty can see it */
+  piWalletAddress?: { address: string; tag: string };
   createdAt:       Date;
   updatedAt:       Date;
 }
@@ -64,6 +66,10 @@ const AdSchema = new Schema<IAd>(
     status:          { type: String, enum: ['active', 'paused', 'completed', 'cancelled'], default: 'active' },
     completedOrders: { type: Number, default: 0 },
     reservedPi:      { type: Number, default: 0, min: 0 },
+    piWalletAddress: {
+      type: new Schema({ address: { type: String, trim: true }, tag: { type: String, trim: true } }, { _id: false }),
+      default: undefined,
+    },
   },
   { timestamps: true }
 );

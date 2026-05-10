@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
-import jwt, { SignOptions } from 'jsonwebtoken';
-import type { StringValue } from 'ms';
-import { User, IPaymentMethodDetailDoc } from '../models/User';
-import { verifyPiToken } from '../services/piNetwork.service';
-import { AuthRequest } from '../middleware/auth';
-import { logger } from '../utils/logger';
+import jwt, { SignOptions }  from 'jsonwebtoken';
+import type { StringValue }  from 'ms';
+import { User, IPaymentMethodDetailDoc, IPiWalletAddressDoc } from '../models/User';
+import { verifyPiToken }     from '../services/piNetwork.service';
+import { AuthRequest }       from '../middleware/auth';
+import { logger }            from '../utils/logger';
 import { config } from '../config';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -20,18 +20,22 @@ const signToken = (id: string, piUid: string, username: string): string => {
 };
 
 const safeUser = (user: InstanceType<typeof User>) => ({
-  id: user.id,
-  piUid: user.piUid,
-  username: user.username,
-  displayName: user.displayName,
-  phone: user.phone,
-  kycVerified: user.kycVerified,
-  rating: user.rating,
-  totalTrades: user.totalTrades,
+  id:              user.id,
+  piUid:           user.piUid,
+  username:        user.username,
+  displayName:     user.displayName,
+  phone:           user.phone,
+  kycVerified:     user.kycVerified,
+  rating:          user.rating,
+  totalTrades:     user.totalTrades,
   completedTrades: user.completedTrades,
-  completionRate: user.completionRate,
-  paymentMethods: user.paymentMethods,
-  createdAt: user.createdAt,
+  completionRate:  user.completionRate,
+  // Wallet balances — included so the frontend can bootstrap without a separate /wallet/balance call
+  piBalance:       user.piBalance,
+  lockedBalance:   user.lockedBalance,
+  paymentMethods:     user.paymentMethods,
+  piWalletAddresses:  user.piWalletAddresses,
+  createdAt:          user.createdAt,
 });
 
 // ─── Pi Authentication (upsert) ───────────────────────────────────────────────
@@ -48,7 +52,7 @@ const safeUser = (user: InstanceType<typeof User>) => ({
  */
 export const piAuth = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { accessToken, uid: claimedUid, username: claimedUsername, displayName, phone } = req.body as {
+    const { accessToken, uid: claimedUid, displayName, phone } = req.body as {
       accessToken: string;
       uid: string;
       username: string;
@@ -72,19 +76,22 @@ export const piAuth = async (req: Request, res: Response): Promise<void> => {
     if (!user) {
       // First login — create account
       user = await User.create({
-        piUid: piIdentity.uid,
-        username: piIdentity.username,
+        piUid:         piIdentity.uid,
+        username:      piIdentity.username,
         accessToken,
-        displayName: displayName || piIdentity.username,
+        displayName:   displayName || piIdentity.username,
         phone,
+        // Capture wallet address from /v2/me so A2U transfers work without a separate API call
+        walletAddress: piIdentity.wallet_address,
       });
       logger.info(`New pioneer registered: ${piIdentity.username} (uid=${piIdentity.uid})`);
     } else {
-      // Returning user — refresh token + username (Pi usernames can change)
       user.accessToken = accessToken;
-      user.username = piIdentity.username;
+      user.username    = piIdentity.username;
+      // Always refresh wallet address — user may have re-created their Pi wallet
+      if (piIdentity.wallet_address) user.walletAddress = piIdentity.wallet_address;
       if (displayName) user.displayName = displayName;
-      if (phone) user.phone = phone;
+      if (phone)       user.phone       = phone;
       await user.save();
       logger.info(`Pioneer logged in: ${piIdentity.username} (uid=${piIdentity.uid})`);
     }
@@ -123,11 +130,9 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     const { displayName, phone } = req.body as { displayName?: string; phone?: string };
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
-
-    if (displayName) user.displayName = displayName;
-    if (phone !== undefined) user.phone = phone;
+    if (displayName)       user.displayName = displayName;
+    if (phone !== undefined) user.phone     = phone;
     await user.save();
-
     logger.info(`Profile updated: ${user.username}`);
     res.json({ success: true, user: safeUser(user) });
   } catch (err) {
@@ -158,30 +163,16 @@ export const addPaymentMethod = async (req: AuthRequest, res: Response): Promise
 
     const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
 
-    // If this one is being set as default, clear all others first
-    if (isDefault) {
-      user.paymentMethods.forEach((pm) => { pm.isDefault = false; });
-    }
+    if (isDefault) user.paymentMethods.forEach((pm) => { pm.isDefault = false; });
 
-    // Prevent exact duplicates (same type + accountNumber)
     const exists = user.paymentMethods.some(
       (pm) => pm.type === type && pm.accountNumber === accountNumber
     );
-    if (exists) {
-      res.status(409).json({ success: false, message: 'This account is already saved' });
-      return;
-    }
+    if (exists) { res.status(409).json({ success: false, message: 'This account is already saved' }); return; }
 
-    // If it's the first one, make it default automatically
     const shouldBeDefault = isDefault || user.paymentMethods.length === 0;
-
-    // Let Mongoose generate _id automatically — avoids subdocument type mismatch
     user.paymentMethods.push({
-      type,
-      label,
-      accountName,
-      accountNumber,
-      bankName,
+      type, label, accountName, accountNumber, bankName,
       isDefault: shouldBeDefault,
       createdAt: new Date(),
     } as IPaymentMethodDetailDoc);
@@ -205,17 +196,13 @@ export const updatePaymentMethod = async (req: AuthRequest, res: Response): Prom
     if (!pm) { res.status(404).json({ success: false, message: 'Payment method not found' }); return; }
 
     const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
-
-    if (isDefault) {
-      user.paymentMethods.forEach((p) => { p.isDefault = false; });
-    }
-
-    if (type !== undefined) pm.type = type;
-    if (label !== undefined) pm.label = label;
-    if (accountName !== undefined) pm.accountName = accountName;
+    if (isDefault) user.paymentMethods.forEach((p) => { p.isDefault = false; });
+    if (type          !== undefined) pm.type          = type;
+    if (label         !== undefined) pm.label         = label;
+    if (accountName   !== undefined) pm.accountName   = accountName;
     if (accountNumber !== undefined) pm.accountNumber = accountNumber;
-    if (bankName !== undefined) pm.bankName = bankName;
-    if (isDefault !== undefined) pm.isDefault = isDefault;
+    if (bankName      !== undefined) pm.bankName      = bankName;
+    if (isDefault     !== undefined) pm.isDefault     = isDefault;
 
     await user.save();
     logger.info(`Payment method updated: ${pm._id} for ${user.username}`);
@@ -239,11 +226,7 @@ export const deletePaymentMethod = async (req: AuthRequest, res: Response): Prom
 
     const wasDefault = user.paymentMethods[pmIndex].isDefault;
     user.paymentMethods.splice(pmIndex, 1);
-
-    // Auto-promote next method to default if the deleted one was default
-    if (wasDefault && user.paymentMethods.length > 0) {
-      user.paymentMethods[0].isDefault = true;
-    }
+    if (wasDefault && user.paymentMethods.length > 0) user.paymentMethods[0].isDefault = true;
 
     await user.save();
     logger.info(`Payment method deleted: ${req.params.pmId} for ${user.username}`);
@@ -272,5 +255,127 @@ export const setDefaultPaymentMethod = async (req: AuthRequest, res: Response): 
   } catch (err) {
     logger.error('setDefaultPaymentMethod error:', err);
     res.status(500).json({ success: false, message: 'Failed to set default' });
+  }
+};
+
+// ─── Pi Wallet Addresses ──────────────────────────────────────────────────────
+
+const STELLAR_RE = /^G[A-Z2-7]{55}$/;
+
+export const getPiWalletAddresses = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.user!.id).select('piWalletAddresses');
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+    res.json({ success: true, piWalletAddresses: user.piWalletAddresses });
+  } catch (err) {
+    logger.error('getPiWalletAddresses error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load wallet addresses' });
+  }
+};
+
+export const addPiWalletAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { address, tag, isDefault } = req.body as {
+      address: string; tag: string; isDefault?: boolean;
+    };
+
+    if (!STELLAR_RE.test(address.trim())) {
+      res.status(400).json({ success: false, message: 'Invalid Pi wallet address — must start with G and be 56 characters' });
+      return;
+    }
+
+    const user = await User.findById(req.user!.id);
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+
+    const exists = user.piWalletAddresses.some((w) => w.address === address.trim());
+    if (exists) {
+      res.status(409).json({ success: false, message: 'This wallet address is already saved' });
+      return;
+    }
+
+    const shouldBeDefault = isDefault || user.piWalletAddresses.length === 0;
+    if (shouldBeDefault) user.piWalletAddresses.forEach((w) => { w.isDefault = false; });
+
+    user.piWalletAddresses.push({
+      address:   address.trim(),
+      tag:       tag.trim(),
+      isDefault: shouldBeDefault,
+      createdAt: new Date(),
+    } as IPiWalletAddressDoc);
+
+    await user.save();
+    logger.info(`Pi wallet address added for ${user.username}: ${tag}`);
+    res.status(201).json({ success: true, piWalletAddresses: user.piWalletAddresses });
+  } catch (err) {
+    logger.error('addPiWalletAddress error:', err);
+    res.status(500).json({ success: false, message: 'Failed to add wallet address' });
+  }
+};
+
+export const updatePiWalletAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.user!.id);
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+
+    const wa = user.piWalletAddresses.id(req.params.waId);
+    if (!wa) { res.status(404).json({ success: false, message: 'Wallet address not found' }); return; }
+
+    const { tag, isDefault } = req.body as { tag?: string; isDefault?: boolean };
+
+    if (isDefault) user.piWalletAddresses.forEach((w) => { w.isDefault = false; });
+    if (tag       !== undefined) wa.tag       = tag.trim();
+    if (isDefault !== undefined) wa.isDefault = isDefault;
+
+    await user.save();
+    logger.info(`Pi wallet address updated: ${wa._id} for ${user.username}`);
+    res.json({ success: true, piWalletAddresses: user.piWalletAddresses });
+  } catch (err) {
+    logger.error('updatePiWalletAddress error:', err);
+    res.status(500).json({ success: false, message: 'Failed to update wallet address' });
+  }
+};
+
+export const deletePiWalletAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.user!.id);
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+
+    const idx = user.piWalletAddresses.findIndex(
+      (w) => w.id.toString() === req.params.waId
+    );
+    if (idx === -1) { res.status(404).json({ success: false, message: 'Wallet address not found' }); return; }
+
+    const wasDefault = user.piWalletAddresses[idx].isDefault;
+    user.piWalletAddresses.splice(idx, 1);
+    if (wasDefault && user.piWalletAddresses.length > 0) {
+      user.piWalletAddresses[0].isDefault = true;
+    }
+
+    await user.save();
+    logger.info(`Pi wallet address deleted: ${req.params.waId} for ${user.username}`);
+    res.json({ success: true, piWalletAddresses: user.piWalletAddresses });
+  } catch (err) {
+    logger.error('deletePiWalletAddress error:', err);
+    res.status(500).json({ success: false, message: 'Failed to delete wallet address' });
+  }
+};
+
+export const setDefaultPiWalletAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.user!.id);
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+
+    const wa = user.piWalletAddresses.id(req.params.waId);
+    if (!wa) { res.status(404).json({ success: false, message: 'Wallet address not found' }); return; }
+
+    user.piWalletAddresses.forEach((w) => { w.isDefault = false; });
+    wa.isDefault = true;
+
+    await user.save();
+    logger.info(`Default Pi wallet address set: ${wa._id} for ${user.username}`);
+    res.json({ success: true, piWalletAddresses: user.piWalletAddresses });
+  } catch (err) {
+    logger.error('setDefaultPiWalletAddress error:', err);
+    res.status(500).json({ success: false, message: 'Failed to set default wallet address' });
   }
 };

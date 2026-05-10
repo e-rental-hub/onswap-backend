@@ -39,14 +39,55 @@ const PaymentMethodDetailSchema = new Schema<IPaymentMethodDetailDoc>(
   { _id: true }
 );
 
+// ─── Pi Wallet Address ───────────────────────────────────────────────────────
+
+/**
+ * A saved Pi (Stellar) wallet address with a user-assigned tag.
+ * Mirrors IPaymentMethodDetail so the frontend uses the same
+ * pick-from-list / add-new UX for both Naira accounts and Pi wallets.
+ */
+export interface IPiWalletAddress {
+  _id:       Types.ObjectId;
+  /** G… Stellar public key, exactly 56 chars */
+  address:   string;
+  /** User-assigned label, e.g. "My Pi Wallet", "Trading wallet" */
+  tag:       string;
+  isDefault: boolean;
+  createdAt: Date;
+}
+
+export type IPiWalletAddressDoc = IPiWalletAddress & Types.Subdocument;
+
+const PiWalletAddressSchema = new Schema<IPiWalletAddressDoc>(
+  {
+    address: {
+      type:      String,
+      required:  true,
+      trim:      true,
+      minlength: 56,
+      maxlength: 56,
+      match:     [/^G[A-Z2-7]{55}$/, 'Invalid Pi wallet address'],
+    },
+    tag:       { type: String, required: true, trim: true, maxlength: 60 },
+    isDefault: { type: Boolean, default: false },
+    createdAt: { type: Date, default: () => new Date() },
+  },
+  { _id: true }
+);
+
 // ─── User ─────────────────────────────────────────────────────────────────────
 
 export interface IUser extends Document<Types.ObjectId> {
-  piUid:        string;
-  username:     string;
-  accessToken:  string;
-  displayName:  string;
-  phone?:       string;
+  piUid:         string;
+  username:      string;
+  accessToken:   string;
+  displayName:   string;
+  phone?:        string;
+  /**
+   * On-chain Stellar public key — captured from Pi /v2/me at login.
+   * Used to send Pi directly to the user's wallet without a /v2/users lookup.
+   */
+  walletAddress?: string;
 
   // ── In-app wallet ──────────────────────────────────────────────────────────
   /**
@@ -67,6 +108,8 @@ export interface IUser extends Document<Types.ObjectId> {
   completedTrades: number;
 
   paymentMethods: Types.DocumentArray<IPaymentMethodDetailDoc>;
+  /** Saved Pi wallet addresses (for receiving Pi from escrow release) */
+  piWalletAddresses: Types.DocumentArray<IPiWalletAddressDoc>;
 
   createdAt: Date;
   updatedAt: Date;
@@ -78,11 +121,12 @@ export interface IUser extends Document<Types.ObjectId> {
 
 const UserSchema = new Schema<IUser>(
   {
-    piUid:       { type: String, required: true, unique: true, index: true },
-    username:    { type: String, required: true, trim: true },
-    accessToken: { type: String, required: true },
-    displayName: { type: String, required: true, trim: true, maxlength: 60 },
-    phone:       { type: String, trim: true },
+    piUid:         { type: String, required: true, unique: true, index: true },
+    username:      { type: String, required: true, trim: true },
+    accessToken:   { type: String, required: true },
+    displayName:   { type: String, required: true, trim: true, maxlength: 60 },
+    phone:         { type: String, trim: true },
+    walletAddress: { type: String, trim: true, sparse: true },
 
     piBalance:     { type: Number, default: 0, min: 0 },
     lockedBalance: { type: Number, default: 0, min: 0 },
@@ -92,7 +136,8 @@ const UserSchema = new Schema<IUser>(
     totalTrades:     { type: Number, default: 0 },
     completedTrades: { type: Number, default: 0 },
 
-    paymentMethods: { type: [PaymentMethodDetailSchema], default: [] },
+    paymentMethods:    { type: [PaymentMethodDetailSchema], default: [] },
+    piWalletAddresses: { type: [PiWalletAddressSchema],    default: [] },
   },
   { timestamps: true }
 );

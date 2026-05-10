@@ -4,6 +4,8 @@ import {
   piAuth, getMe, updateProfile,
   getPaymentMethods, addPaymentMethod, updatePaymentMethod,
   deletePaymentMethod, setDefaultPaymentMethod,
+  getPiWalletAddresses, addPiWalletAddress, updatePiWalletAddress,
+  deletePiWalletAddress, setDefaultPiWalletAddress,
 } from '../controllers/authController';
 
 import {
@@ -19,6 +21,7 @@ import { authenticate, validateBody } from '../middleware/auth';
 import {
   piAuthSchema, updateProfileSchema,
   addPaymentMethodSchema, updatePaymentMethodSchema,
+  addPiWalletAddressSchema, updatePiWalletAddressSchema,
   approveDepositSchema, completeDepositSchema, cancelDepositSchema, incompleteDepositSchema,
   createAdSchema, updateAdSchema, createOrderSchema, sendMessageSchema, updateOrderStatusSchema,
 } from '../validators/schemas';
@@ -36,6 +39,14 @@ router.post  ('/auth/payment-methods',                  authenticate, validateBo
 router.patch ('/auth/payment-methods/:pmId',            authenticate, validateBody(updatePaymentMethodSchema), updatePaymentMethod);
 router.delete('/auth/payment-methods/:pmId',            authenticate, deletePaymentMethod);
 router.patch ('/auth/payment-methods/:pmId/set-default',authenticate, setDefaultPaymentMethod);
+
+// ─── Pi Wallet Addresses ──────────────────────────────────────────────────────
+
+router.get   ('/auth/pi-wallets',                  authenticate, getPiWalletAddresses);
+router.post  ('/auth/pi-wallets',                  authenticate, validateBody(addPiWalletAddressSchema),    addPiWalletAddress);
+router.patch ('/auth/pi-wallets/:waId',            authenticate, validateBody(updatePiWalletAddressSchema), updatePiWalletAddress);
+router.delete('/auth/pi-wallets/:waId',            authenticate, deletePiWalletAddress);
+router.patch ('/auth/pi-wallets/:waId/set-default',authenticate, setDefaultPiWalletAddress);
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────
 

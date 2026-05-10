@@ -33,6 +33,24 @@ export const updatePaymentMethodSchema = paymentMethodDetailSchema.partial().ext
   isDefault: z.boolean().optional(),
 });
 
+// ─── Pi Wallet Addresses ──────────────────────────────────────────────────────
+
+/** Stellar public key: starts with G, exactly 56 chars, base32 alphabet */
+const stellarAddressRegex = /^G[A-Z2-7]{55}$/;
+
+export const addPiWalletAddressSchema = z.object({
+  address:   z.string()
+    .length(56, 'Pi wallet address must be exactly 56 characters')
+    .regex(stellarAddressRegex, 'Invalid Pi wallet address — must start with G followed by 55 uppercase letters/numbers'),
+  tag:       z.string().min(1, 'Tag is required').max(60, 'Tag must be 60 characters or less').trim(),
+  isDefault: z.boolean().optional().default(false),
+});
+
+export const updatePiWalletAddressSchema = z.object({
+  tag:       z.string().min(1).max(60).trim().optional(),
+  isDefault: z.boolean().optional(),
+});
+
 // ─── Wallet / deposit ─────────────────────────────────────────────────────────
 
 export const approveDepositSchema = z.object({
