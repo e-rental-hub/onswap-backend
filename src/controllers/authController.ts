@@ -38,6 +38,16 @@ const safeUser = (user: InstanceType<typeof User>) => ({
   createdAt:          user.createdAt,
 });
 
+function toId(field: unknown): string {
+  if (field == null) return '';
+  // Populated document — has _id property
+  if (typeof field === 'object' && '_id' in (field as object)) {
+    return (field as { _id: { toString(): string } })._id.toString();
+  }
+  // Raw ObjectId or string
+  return String(field);
+}
+
 // ─── Pi Authentication (upsert) ───────────────────────────────────────────────
 
 /**
@@ -220,7 +230,7 @@ export const deletePaymentMethod = async (req: AuthRequest, res: Response): Prom
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
     const pmIndex = user.paymentMethods.findIndex(
-      (pm) => pm.id.toString() === req.params.pmId
+      (pm) => toId(pm._id) === req.params.pmId
     );
     if (pmIndex === -1) { res.status(404).json({ success: false, message: 'Payment method not found' }); return; }
 
@@ -341,7 +351,7 @@ export const deletePiWalletAddress = async (req: AuthRequest, res: Response): Pr
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
     const idx = user.piWalletAddresses.findIndex(
-      (w) => w.id.toString() === req.params.waId
+      (w) => toId(w._id) === req.params.waId
     );
     if (idx === -1) { res.status(404).json({ success: false, message: 'Wallet address not found' }); return; }
 

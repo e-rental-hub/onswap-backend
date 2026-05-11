@@ -1,6 +1,6 @@
 import { Response }    from 'express';
 import mongoose        from 'mongoose';
-import { Ad, IAd }     from '../models/Ad';
+import { Ad, IAd, PaymentMethod }     from '../models/Ad';
 import { User }        from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import {
@@ -121,22 +121,20 @@ export const createAd = async (req: AuthRequest, res: Response): Promise<void> =
 
     const [ad] = await Ad.create(
       [{
-        creator:         userId,
+        creator: userId,
         type,
         piAmount,
         availableAmount: piAmount,
         minLimit,
         maxLimit,
         pricePerPi,
-        currency:        currency ?? 'NGN',
-        paymentMethods,
-        paymentDetails:  paymentDetails ?? [],
+        currency: currency ?? 'NGN',
+        paymentMethods: paymentMethods as PaymentMethod[],
+        paymentDetails: paymentDetails ?? [],
         paymentWindow,
         terms,
         autoReply,
-        // reservedPi tracks how much is CURRENTLY locked from the seller's
-        // lockedBalance for this ad. Starts equal to piAmount, decrements
-        // as orders are filled, zeroes on cancel/completion.
+
         reservedPi: type === 'sell' ? piAmount : 0,
       }],
       { session }
@@ -402,7 +400,7 @@ export const hardDeleteAd = async (req: AuthRequest, res: Response): Promise<voi
     const { Order } = await import('../models/Order');
     const liveOrder = await Order.findOne({
       ad:     ad._id,
-      status: { $in: ['pending', 'payment_pending', 'payment_sent', 'disputed'] },
+      status: { $in: ['payment_pending', 'payment_sent', 'disputed'] },
     }).session(session);
 
     if (liveOrder) {
