@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { PaymentMethodEnum } from './enum';
 
 // ─── Payment Method ───────────────────────────────────────────────────────────
 
@@ -9,7 +10,7 @@ export type PaymentMethodType =
   | 'kuda'
   | 'moniepoint';
 
-export interface IPaymentMethodDetail {
+export interface IPaymentAccountDetail {
   _id: Types.ObjectId;
   type: PaymentMethodType;
   label: string;
@@ -20,13 +21,13 @@ export interface IPaymentMethodDetail {
   createdAt: Date;
 }
 
-export type IPaymentMethodDetailDoc = IPaymentMethodDetail & Types.Subdocument;
+export type IPaymentMethodDetailDoc = IPaymentAccountDetail & Types.Subdocument;
 
 const PaymentMethodDetailSchema = new Schema<IPaymentMethodDetailDoc>(
   {
     type: {
       type: String,
-      enum: ['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint'],
+      enum: PaymentMethodEnum,
       required: true,
     },
     label:         { type: String, required: true, trim: true, maxlength: 60 },
