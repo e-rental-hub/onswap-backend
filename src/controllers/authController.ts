@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import jwt, { SignOptions }  from 'jsonwebtoken';
 import type { StringValue }  from 'ms';
-import { User, IPaymentMethodDetailDoc, IPiWalletAddressDoc } from '../models/User';
+import { User, IUserAccountDetailDoc, IPiWalletAddressDoc } from '../models/User';
 import { verifyPiToken }     from '../services/piNetwork.service';
 import { AuthRequest }       from '../middleware/auth';
 import { logger }            from '../utils/logger';
@@ -33,7 +33,7 @@ const safeUser = (user: InstanceType<typeof User>) => ({
   // Wallet balances — included so the frontend can bootstrap without a separate /wallet/balance call
   piBalance:       user.piBalance,
   lockedBalance:   user.lockedBalance,
-  paymentMethods:     user.paymentMethods,
+  userAccountDetails:     user.userAccountDetails,
   piWalletAddresses:  user.piWalletAddresses,
   createdAt:          user.createdAt,
 });
@@ -88,18 +88,12 @@ export const piAuth = async (req: Request, res: Response): Promise<void> => {
       user = await User.create({
         piUid:         piIdentity.uid,
         username:      piIdentity.username,
-        accessToken,
         displayName:   displayName || piIdentity.username,
-        phone,
-        // Capture wallet address from /v2/me so A2U transfers work without a separate API call
-        walletAddress: piIdentity.wallet_address,
+        phone
       });
       logger.info(`New pioneer registered: ${piIdentity.username} (uid=${piIdentity.uid})`);
     } else {
-      user.accessToken = accessToken;
       user.username    = piIdentity.username;
-      // Always refresh wallet address — user may have re-created their Pi wallet
-      if (piIdentity.wallet_address) user.walletAddress = piIdentity.wallet_address;
       if (displayName) user.displayName = displayName;
       if (phone)       user.phone       = phone;
       await user.save();
@@ -151,62 +145,63 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
-// ─── Payment Methods ──────────────────────────────────────────────────────────
+// ─── User Account Details ─────────────────────────────────────────────────────
 
-/** GET /api/v1/auth/payment-methods */
-export const getPaymentMethods = async (req: AuthRequest, res: Response): Promise<void> => {
+/** GET /api/v1/auth/account-details */
+export const getuserAccountDetails = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const user = await User.findById(req.user!.id).select('paymentMethods');
+    const user = await User.findById(req.user!.id).select('userAccountDetails');
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
-    res.json({ success: true, paymentMethods: user.paymentMethods });
+    res.json({ success: true, userAccountDetails: user.userAccountDetails });
   } catch (err) {
-    logger.error('getPaymentMethods error:', err);
-    res.status(500).json({ success: false, message: 'Failed to load payment methods' });
+    logger.error('getuserAccountDetails error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load account details ' });
   }
 };
 
-/** POST /api/v1/auth/payment-methods */
-export const addPaymentMethod = async (req: AuthRequest, res: Response): Promise<void> => {
+/** POST /api/v1/auth/account-details */
+export const addUserAccountDetail = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
     const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
+    logger.info(`Adding user account detail for ${user.username}: ${type} ${accountNumber}`);
 
-    if (isDefault) user.paymentMethods.forEach((pm) => { pm.isDefault = false; });
+    if (isDefault) user.userAccountDetails.forEach((pm) => { pm.isDefault = false; });
 
-    const exists = user.paymentMethods.some(
+    const exists = user.userAccountDetails.some(
       (pm) => pm.type === type && pm.accountNumber === accountNumber
     );
     if (exists) { res.status(409).json({ success: false, message: 'This account is already saved' }); return; }
 
-    const shouldBeDefault = isDefault || user.paymentMethods.length === 0;
-    user.paymentMethods.push({
+    const shouldBeDefault = isDefault || user.userAccountDetails.length === 0;
+    user.userAccountDetails.push({
       type, label, accountName, accountNumber, bankName,
       isDefault: shouldBeDefault,
       createdAt: new Date(),
-    } as IPaymentMethodDetailDoc);
+    } as IUserAccountDetailDoc);
 
     await user.save();
-    logger.info(`Payment method added for ${user.username}: ${type}`);
-    res.status(201).json({ success: true, paymentMethods: user.paymentMethods });
+    logger.info(`User account detail added for ${user.username}: ${type}`);
+    res.status(201).json({ success: true, userAccountDetails: user.userAccountDetails });
   } catch (err) {
-    logger.error('addPaymentMethod error:', err);
-    res.status(500).json({ success: false, message: 'Failed to add payment method' });
+    logger.error('addUserAccountDetail error:', err);
+    res.status(500).json({ success: false, message: 'Failed to add user account detail' });
   }
 };
 
-/** PATCH /api/v1/auth/payment-methods/:pmId */
-export const updatePaymentMethod = async (req: AuthRequest, res: Response): Promise<void> => {
+/** PATCH /api/v1/auth/account-details/:pmId */
+export const updateUserAccountDetail = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
-    const pm = user.paymentMethods.id(req.params.pmId);
-    if (!pm) { res.status(404).json({ success: false, message: 'Payment method not found' }); return; }
+    const pm = user.userAccountDetails.id(req.params.pmId);
+    if (!pm) { res.status(404).json({ success: false, message: 'User account detail not found' }); return; }
 
     const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
-    if (isDefault) user.paymentMethods.forEach((p) => { p.isDefault = false; });
+    if (isDefault) user.userAccountDetails.forEach((p) => { p.isDefault = false; });
     if (type          !== undefined) pm.type          = type;
     if (label         !== undefined) pm.label         = label;
     if (accountName   !== undefined) pm.accountName   = accountName;
@@ -215,55 +210,55 @@ export const updatePaymentMethod = async (req: AuthRequest, res: Response): Prom
     if (isDefault     !== undefined) pm.isDefault     = isDefault;
 
     await user.save();
-    logger.info(`Payment method updated: ${pm._id} for ${user.username}`);
-    res.json({ success: true, paymentMethods: user.paymentMethods });
+    logger.info(`User account detail updated: ${pm._id} for ${user.username}`);
+    res.json({ success: true, userAccountDetails: user.userAccountDetails });
   } catch (err) {
-    logger.error('updatePaymentMethod error:', err);
-    res.status(500).json({ success: false, message: 'Failed to update payment method' });
+    logger.error('updateUserAccountDetail error:', err);
+    res.status(500).json({ success: false, message: 'Failed to update user account detail' });
   }
 };
 
-/** DELETE /api/v1/auth/payment-methods/:pmId */
-export const deletePaymentMethod = async (req: AuthRequest, res: Response): Promise<void> => {
+/** DELETE /api/v1/auth/account-details/:pmId */
+export const deleteUserAccountDetail = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
-    const pmIndex = user.paymentMethods.findIndex(
+    const pmIndex = user.userAccountDetails.findIndex(
       (pm) => toId(pm._id) === req.params.pmId
     );
-    if (pmIndex === -1) { res.status(404).json({ success: false, message: 'Payment method not found' }); return; }
+    if (pmIndex === -1) { res.status(404).json({ success: false, message: 'User account detail not found' }); return; }
 
-    const wasDefault = user.paymentMethods[pmIndex].isDefault;
-    user.paymentMethods.splice(pmIndex, 1);
-    if (wasDefault && user.paymentMethods.length > 0) user.paymentMethods[0].isDefault = true;
+    const wasDefault = user.userAccountDetails[pmIndex].isDefault;
+    user.userAccountDetails.splice(pmIndex, 1);
+    if (wasDefault && user.userAccountDetails.length > 0) user.userAccountDetails[0].isDefault = true;
 
     await user.save();
-    logger.info(`Payment method deleted: ${req.params.pmId} for ${user.username}`);
-    res.json({ success: true, paymentMethods: user.paymentMethods });
+    logger.info(`User account detail deleted: ${req.params.pmId} for ${user.username}`);
+    res.json({ success: true, userAccountDetails: user.userAccountDetails });
   } catch (err) {
-    logger.error('deletePaymentMethod error:', err);
-    res.status(500).json({ success: false, message: 'Failed to delete payment method' });
+    logger.error('deleteUserAccountDetail error:', err);
+    res.status(500).json({ success: false, message: 'Failed to delete user account detail' });
   }
 };
 
-/** PATCH /api/v1/auth/payment-methods/:pmId/set-default */
-export const setDefaultPaymentMethod = async (req: AuthRequest, res: Response): Promise<void> => {
+/** PATCH /api/v1/auth/account-details/:pmId/set-default */
+export const setDefaultUserAccountDetail = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
-    const pm = user.paymentMethods.id(req.params.pmId);
-    if (!pm) { res.status(404).json({ success: false, message: 'Payment method not found' }); return; }
+    const pm = user.userAccountDetails.id(req.params.pmId);
+    if (!pm) { res.status(404).json({ success: false, message: 'User account detail not found' }); return; }
 
-    user.paymentMethods.forEach((p) => { p.isDefault = false; });
+    user.userAccountDetails.forEach((p) => { p.isDefault = false; });
     pm.isDefault = true;
 
     await user.save();
-    logger.info(`Default payment method set: ${pm._id} for ${user.username}`);
-    res.json({ success: true, paymentMethods: user.paymentMethods });
+    logger.info(`Default user account detail set: ${pm._id} for ${user.username}`);
+    res.json({ success: true, userAccountDetails: user.userAccountDetails });
   } catch (err) {
-    logger.error('setDefaultPaymentMethod error:', err);
+    logger.error('setDefaultUserAccountDetail error:', err);
     res.status(500).json({ success: false, message: 'Failed to set default' });
   }
 };

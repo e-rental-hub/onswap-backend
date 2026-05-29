@@ -1,6 +1,6 @@
 import { Response }    from 'express';
 import mongoose        from 'mongoose';
-import { Order }       from '../models/Order';
+import { IMessage, Order }       from '../models/Order';
 import { Ad }          from '../models/Ad';
 import { User }        from '../models/User';
 import { AuthRequest } from '../middleware/auth';
@@ -12,7 +12,8 @@ import {
 } from '../services/walletService';
 import { logger }        from '../utils/logger';
 import { releaseToUser } from '../services/piNetwork.service';
-import { config } from '../config';
+import { config }        from '../config';
+import { AdStatusEnum, AdTypeEnum, EscrowStatusEnum, MessageTypeEnum, OrderStatusEnum, PaymentMethodEnum } from '../models/enum';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,41 +34,56 @@ const POPULATE_ORDER = [
  */
 function toId(field: unknown): string {
   if (field == null) return '';
-  // Populated document — has _id property
   if (typeof field === 'object' && '_id' in (field as object)) {
     return (field as { _id: { toString(): string } })._id.toString();
   }
-  // Raw ObjectId or string
   return String(field);
 }
 
 // ─── POST /orders ─────────────────────────────────────────────────────────────
 //
-// Creates a new P2P order against an existing ad.
+// Both `sellerAccountDetailId` and `buyerWalletAddressId` are required.
+// The backend resolves them to full snapshots so the order is self-contained.
 //
-// Sell-ad flow (creator sells Pi, new user buys):
-//   • Pi is already locked in seller's lockedBalance from ad creation.
-//   • We decrement ad.availableAmount and write an escrow audit row.
-//   • Buyer has no wallet interaction — they just need to send Naira.
+// Sell-ad flow:
+//   • sellerAccountDetail  → resolved from ad.sellerAccountDetail (snapshot on ad)
+//   • buyerWalletAddress   → resolved from buyer's piWalletAddresses by id
 //
-// Buy-ad flow (creator wants to buy Pi, new user is the Pi seller):
-//   • The incoming user IS the Pi seller.
-//   • We must lock their piBalance for this order (reserveForAd semantics but
-//     for an order-level lock, not an ad-level one).
-//   • If their piBalance < piAmount, the frontend showed them the deposit modal
-//     first; this endpoint is only reached once balance is confirmed.
+// Buy-ad flow:
+//   • sellerAccountDetail  → resolved from incoming user's userAccountDetails by id
+//   • buyerWalletAddress   → resolved from ad.buyerWalletAddress (snapshot on ad)
 
 export const createOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const userId                         = req.user!.id;
-    const { adId, piAmount, paymentMethod, buyerWalletAddress } = req.body as {
-      adId: string; piAmount: number; paymentMethod: string; buyerWalletAddress: string;
+    const userId = req.user!.id;
+    const {
+      adId,
+      piAmount,
+      paymentMethod,
+      sellerAccountDetailId,
+      buyerWalletAddressId,
+    } = req.body as {
+      adId:                  string;
+      piAmount:              number;
+      paymentMethod:         string;
+      sellerAccountDetailId: string;
+      buyerWalletAddressId:  string;
     };
 
+    // Both IDs are mandatory for every order
+    if (!sellerAccountDetailId && !buyerWalletAddressId) {
+      await session.abortTransaction();
+      res.status(400).json({
+        success: false,
+        message: 'Both sellerAccountDetailId and buyerWalletAddressId are required to create an order.',
+      });
+      return;
+    }
+
     const ad = await Ad.findById(adId).session(session);
-    if (!ad || ad.status !== 'active') {
+    if (!ad || ad.status !== AdStatusEnum.active) {
       await session.abortTransaction();
       res.status(404).json({ success: false, message: 'Ad not found or not active' });
       return;
@@ -79,7 +95,12 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Validate piAmount within ad limits
+    if (!ad.paymentMethods.includes(paymentMethod as PaymentMethodEnum)) {
+      await session.abortTransaction();
+      res.status(400).json({ success: false, message: 'Payment method not supported by this ad' });
+      return;
+    }
+
     const nairaAmount = Math.round(piAmount * ad.pricePerPi * 100) / 100;
     if (nairaAmount < ad.minLimit || nairaAmount > ad.maxLimit) {
       await session.abortTransaction();
@@ -99,75 +120,155 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    if (!ad.paymentMethods.includes(paymentMethod as never)) {
-      await session.abortTransaction();
-      res.status(400).json({ success: false, message: 'Payment method not supported by this ad' });
-      return;
-    }
-
-    // Determine buyer/seller roles based on ad type
-    const isSellAd = ad.type === 'sell';
+    const isSellAd = ad.type === AdTypeEnum.sell;
     const buyerId  = isSellAd ? new mongoose.Types.ObjectId(userId) : ad.creator;
-    const sellerId = isSellAd ? ad.creator : new mongoose.Types.ObjectId(userId);
+    const sellerId = isSellAd ? ad.creator                          : new mongoose.Types.ObjectId(userId);
 
-    // Buy-ad: the incoming user (pi seller) must have sufficient balance
-    if (!isSellAd) {
+    // ── Resolve sellerAccountDetail snapshot ──────────────────────────────
+    // Sell-ad: snapshot is already stored on the ad at creation time.
+    // Buy-ad:  the incoming user (Pi seller) picks one of their saved accounts.
+    let sellerAccountDetail: typeof ad.sellerAccountDetail;
+
+    if (isSellAd) {
+      // The ad already holds the seller's payment account snapshot.
+      if (!ad.sellerAccountDetail) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'This sell ad has no payment account on record.' });
+        return;
+      }
+      sellerAccountDetail = ad.sellerAccountDetail;
+    } else {
+      // Incoming user is the Pi seller — look up their saved account.
       const piSeller = await User.findById(userId).session(session);
-      if (!piSeller || piSeller.piBalance < piAmount) {
+      if (!piSeller) {
+        await session.abortTransaction();
+        res.status(404).json({ success: false, message: 'User not found' });
+        return;
+      }
+
+      if (piSeller.piBalance < piAmount) {
         await session.abortTransaction();
         res.status(400).json({
           success:      false,
           message:      'Insufficient Pi balance to fill this buy ad.',
           required:     piAmount,
-          available:    piSeller?.piBalance ?? 0,
-          shortfall:    piAmount - (piSeller?.piBalance ?? 0),
+          available:    piSeller.piBalance,
+          shortfall:    piAmount - piSeller.piBalance,
           needsDeposit: true,
         });
         return;
       }
+
+      const savedAccount = piSeller.userAccountDetails.id(sellerAccountDetailId);
+      if (!savedAccount) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'Seller account detail not found in your profile.' });
+        return;
+      }
+
+      sellerAccountDetail = {
+        type:          savedAccount.type,
+        label:         savedAccount.label,
+        accountName:   savedAccount.accountName,
+        accountNumber: savedAccount.accountNumber,
+        bankName:      savedAccount.bankName,
+      };
     }
 
-    // Decrement ad available amount
+    // ── Resolve buyerWalletAddress ────────────────────────────────────────
+    // Buy-ad:  wallet address snapshot is already stored on the ad.
+    // Sell-ad: the incoming user (Pi buyer) picks one of their saved wallets.
+    let buyerWalletAddress: string;
+
+    if (isSellAd) {
+      // Incoming user is the Pi buyer — look up their saved wallet.
+      const piBuyer = await User.findById(userId).session(session);
+      if (!piBuyer) {
+        await session.abortTransaction();
+        res.status(404).json({ success: false, message: 'User not found' });
+        return;
+      }
+
+      const savedWallet = piBuyer.piWalletAddresses.id(buyerWalletAddressId);
+      if (!savedWallet) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'Buyer Pi wallet address not found in your profile.' });
+        return;
+      }
+
+      buyerWalletAddress = savedWallet.address;
+    } else {
+      // The ad already holds the buyer's Pi wallet snapshot.
+      if (!ad.buyerWalletAddress) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'This buy ad has no Pi wallet address on record.' });
+        return;
+      }
+      buyerWalletAddress = ad.buyerWalletAddress;
+    }
+
+    // ── Decrement ad available amount ─────────────────────────────────────
     ad.availableAmount -= piAmount;
-    if (ad.availableAmount <= 0) ad.status = 'completed';
-    // For sell ads: update reservedPi to match remaining available
+    if (ad.availableAmount <= 0) ad.status = AdStatusEnum.completed;
     if (isSellAd) ad.reservedPi = ad.availableAmount;
     await ad.save({ session });
 
     const paymentDeadline = new Date(Date.now() + ad.paymentWindow * 60 * 1000);
 
-    const [order] = await Order.create(
-      [{
-        ad:     ad._id,
-        buyer:  buyerId,
-        seller: sellerId,
-        piAmount,
-        nairaAmount,
-        pricePerPi:    ad.pricePerPi,
-        currency:      ad.currency,
-        paymentMethod,
-        buyerWalletAddress,
-        status:         'payment_pending',
-        escrow: {
-          piAmount,
-          status:   'locked',
-          lockedAt: new Date(),
-          txId:     `ESC-${Date.now()}`,
-        },
-        paymentDeadline,
-        messages: [{
-          sender:    buyerId,
-          content:   `Order created. Buyer must pay ₦${nairaAmount.toLocaleString()} within ${ad.paymentWindow} minutes.`,
-          type:      'system',
-          timestamp: new Date(),
-        }],
-      }],
-      { session }
-    );
+    // ── Build initial messages (system + optional auto-reply) ─────────────
+    // Both messages are included when constructing the order document so they
+    // are saved atomically — no separate .save() call needed.
+    const initialMessages: IMessage[] = [
+      {
+        sender:    buyerId,
+        content:   `Order created. Buyer must pay ₦${nairaAmount.toLocaleString()} within ${ad.paymentWindow} minutes.`,
+        type:      MessageTypeEnum.system,
+        timestamp: new Date(),
+      },
+    ];
 
-    // Wallet operations
+    if (ad.autoReply) {
+      initialMessages.push({
+        sender:    ad.creator,
+        content:   ad.autoReply,
+        type:      MessageTypeEnum.text,
+        timestamp: new Date(),
+      });
+    }
+
+    // ── Create order ──────────────────────────────────────────────────────
+    // Use `new Order({...}).save({ session })` instead of `Order.create([...], { session })`.
+    // The array-overload of Model.create() has ambiguous TypeScript overloads when
+    // a session option is passed as the second argument — the compiler cannot narrow
+    // the return type and produces "no overload matches" / "Type 'never'" errors.
+    // Constructing the document explicitly and calling .save() avoids this entirely.
+    const order = new Order({
+      ad:     ad._id,
+      buyer:  buyerId,
+      seller: sellerId,
+      piAmount,
+      nairaAmount,
+      pricePerPi:          ad.pricePerPi,
+      currency:            ad.currency,
+      paymentMethod:       paymentMethod as PaymentMethodEnum,
+      sellerAccountDetail,
+      buyerWalletAddress,
+      status:              OrderStatusEnum.paymentPending,
+      escrow: {
+        piAmount,
+        status:   EscrowStatusEnum.locked,
+        lockedAt: new Date(),
+        txId:     `ESC-${Date.now()}`,
+      },
+      paymentDeadline,
+      messages: initialMessages,
+    });
+
+    await order.save({ session });
+
+    // ── Wallet operations ─────────────────────────────────────────────────
     if (isSellAd) {
-      // Pi already in seller's lockedBalance from ad creation — audit only
+      // Pi already in seller's lockedBalance from ad creation — audit only.
       await lockForEscrow(
         session,
         sellerId,
@@ -211,15 +312,15 @@ export const getOrders = async (req: AuthRequest, res: Response): Promise<void> 
     const { status, role } = req.query;
 
     const filter: Record<string, unknown> = {};
-    if (role === 'buyer')  filter.buyer  = userId;
+    if (role === 'buyer')       filter.buyer  = userId;
     else if (role === 'seller') filter.seller = userId;
-    else filter.$or = [{ buyer: userId }, { seller: userId }];
+    else                        filter.$or = [{ buyer: userId }, { seller: userId }];
     if (status) filter.status = status;
 
     const orders = await Order.find(filter)
       .populate('buyer',  'username displayName rating')
       .populate('seller', 'username displayName rating')
-      .populate('ad',     'type paymentDetails paymentMethods')
+      .populate('ad',     'type paymentMethods paymentWindow')
       .sort({ createdAt: -1 })
       .limit(50);
 
@@ -247,7 +348,6 @@ export const getOrderById = async (req: AuthRequest, res: Response): Promise<voi
       raw.seller.toString() === userId;
     if (!isParticipant) { res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
 
-    // Now safe to populate for the response
     const order = await raw.populate(POPULATE_ORDER);
     res.json({ success: true, order });
   } catch (err) {
@@ -270,24 +370,40 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
       .populate('buyer',  'username piUid')
       .populate('seller', 'username piUid');
 
-    if (!order) { await session.abortTransaction(); res.status(404).json({ success: false, message: 'Order not found' }); return; }
+    if (!order) {
+      await session.abortTransaction();
+      res.status(404).json({ success: false, message: 'Order not found' });
+      return;
+    }
 
     // Use toId() — these fields are populated so ._id must be used, not .toString() directly
     const isBuyer  = toId(order.buyer)  === userId;
     const isSeller = toId(order.seller) === userId;
-    if (!isBuyer && !isSeller) { await session.abortTransaction(); res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
+    if (!isBuyer && !isSeller) {
+      await session.abortTransaction();
+      res.status(403).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
 
-    const sellerId  = (order.seller as unknown as { _id: mongoose.Types.ObjectId; piUid: string });
-    const ad        = await Ad.findById(order.ad).session(session);
+    const sellerId = order.seller as unknown as { _id: mongoose.Types.ObjectId; piUid: string };
+    const ad       = await Ad.findById(order.ad).session(session);
 
     let systemMsg = '';
 
     switch (action) {
 
       case 'confirm_payment':
-        if (!isBuyer) { await session.abortTransaction(); res.status(403).json({ success: false, message: 'Only buyer can confirm payment' }); return; }
-        if (order.status !== 'payment_pending') { await session.abortTransaction(); res.status(400).json({ success: false, message: 'Invalid order state for this action' }); return; }
-        order.status = 'payment_sent';
+        if (!isBuyer) {
+          await session.abortTransaction();
+          res.status(403).json({ success: false, message: 'Only buyer can confirm payment' });
+          return;
+        }
+        if (order.status !== OrderStatusEnum.paymentPending) {
+          await session.abortTransaction();
+          res.status(400).json({ success: false, message: 'Invalid order state for this action' });
+          return;
+        }
+        order.status = OrderStatusEnum.paymentSent;
         systemMsg = '✅ Buyer confirmed payment. Seller — verify receipt and release Pi.';
         break;
 
@@ -320,7 +436,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
           logger.error(`release_escrow: on-chain transfer failed for order ${order._id}`, releaseResult);
           res.status(502).json({
             success:          false,
-            message:          `Pi transfer failed: ${releaseResult.error ?? 'Unknown error'}. The order is NOT marked complete. Please retry or contact support.`,
+            message:          `Pi transfer failed: ${releaseResult.error ?? 'Unknown error'}. Order NOT marked complete. Please retry or contact support.`,
             recipientAddress: releaseResult.recipientAddress,
             txid:             releaseResult.txid,
           });
@@ -334,15 +450,15 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
           const freshOrder = await Order.findById(order._id).session(dbSession);
           if (!freshOrder) throw new Error('Order disappeared after on-chain transfer');
 
-          freshOrder.status           = 'completed';
-          freshOrder.escrow.status    = 'released';
+          freshOrder.status            = OrderStatusEnum.completed;
+          freshOrder.escrow.status     = EscrowStatusEnum.released;
           freshOrder.escrow.releasedAt = new Date();
-          freshOrder.escrow.txId      = releaseResult.txid; // Stellar transaction hash
-          freshOrder.completedAt      = new Date();
+          freshOrder.escrow.txId       = releaseResult.txid;
+          freshOrder.completedAt       = new Date();
           freshOrder.messages.push({
             sender:    new mongoose.Types.ObjectId(userId),
             content:   `🎉 Pi released on-chain! txid: ${releaseResult.txid}`,
-            type:      'system',
+            type:      MessageTypeEnum.system,
             timestamp: new Date(),
           });
           await freshOrder.save({ session: dbSession });
@@ -374,38 +490,38 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
           res.status(500).json({
             success: false,
             message: 'Pi was sent on-chain but the order record could not be updated. Please contact support with your order ID.',
-            txid: releaseResult.txid,
+            txid:    releaseResult.txid,
           });
         } finally {
           dbSession.endSession();
         }
-        // Return early — we've already sent the response above
+        // Early return — response already sent above
         return;
       }
 
       case 'cancel':
-        if (order.status === 'completed' || order.status === 'disputed') {
+        if (order.status === OrderStatusEnum.completed || order.status === OrderStatusEnum.disputed) {
           await session.abortTransaction();
           res.status(400).json({ success: false, message: 'Cannot cancel a completed or disputed order' });
           return;
         }
-        if (order.status === 'payment_sent' && isBuyer) {
+        if (order.status === OrderStatusEnum.paymentSent && isBuyer) {
           await session.abortTransaction();
           res.status(400).json({ success: false, message: 'You have already confirmed payment. Raise a dispute if there is an issue.' });
           return;
         }
 
-        order.status        = 'cancelled';
+        order.status        = OrderStatusEnum.cancelled;
         order.cancelledAt   = new Date();
         order.cancelReason  = reason;
-        order.escrow.status = 'refunded';
+        order.escrow.status = EscrowStatusEnum.refunded;
         systemMsg = `Order cancelled.${reason ? ` Reason: ${reason}` : ''}`;
 
         // Refund Pi back to the ad's available pool
         if (ad) {
           ad.availableAmount += order.piAmount;
-          if (ad.type === 'sell') ad.reservedPi = ad.availableAmount;
-          if (ad.status === 'completed') ad.status = 'active'; // re-open if it was auto-completed
+          if (ad.type === AdTypeEnum.sell) ad.reservedPi = ad.availableAmount;
+          if (ad.status === AdStatusEnum.completed) ad.status = AdStatusEnum.active;
           await ad.save({ session });
         }
 
@@ -420,12 +536,12 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         break;
 
       case 'dispute':
-        if (!['payment_pending', 'payment_sent'].includes(order.status)) {
+        if (![OrderStatusEnum.paymentPending, OrderStatusEnum.paymentSent].includes(order.status)) {
           await session.abortTransaction();
           res.status(400).json({ success: false, message: 'Cannot dispute this order in its current state' });
           return;
         }
-        order.status        = 'disputed';
+        order.status        = OrderStatusEnum.disputed;
         order.disputeReason = reason;
         systemMsg = `⚠️ Dispute raised: "${reason}". Admin will review within 24 hours.`;
         break;
@@ -440,7 +556,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
       order.messages.push({
         sender:    new mongoose.Types.ObjectId(userId),
         content:   systemMsg,
-        type:      'system',
+        type:      MessageTypeEnum.system,
         timestamp: new Date(),
       });
     }
@@ -458,7 +574,8 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
     const message = err instanceof Error ? err.message : 'Failed to update order';
     res.status(500).json({ success: false, message });
   } finally {
-    session.endSession();
+    // Guard: session may already be ended inside the release_escrow case
+    try { session.endSession(); } catch (_) { /* already ended */ }
   }
 };
 
@@ -477,7 +594,7 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
       toId(order.seller) === userId;
     if (!isParticipant) { res.status(403).json({ success: false, message: 'Unauthorized' }); return; }
 
-    if (['completed', 'cancelled'].includes(order.status)) {
+    if ([OrderStatusEnum.completed, OrderStatusEnum.cancelled].includes(order.status)) {
       res.status(400).json({ success: false, message: 'Cannot send messages on a closed order' });
       return;
     }
@@ -485,7 +602,7 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
     order.messages.push({
       sender:    new mongoose.Types.ObjectId(userId),
       content,
-      type:      (type as 'text' | 'system' | 'payment_proof') || 'text',
+      type:      (type as MessageTypeEnum) || MessageTypeEnum.text,
       timestamp: new Date(),
       imageUrl,
     });

@@ -3,3 +3,10 @@ export interface PiTransferResult {
   txId?: string;
   error?: string;
 }
+
+export interface CreditResult {
+  newBalance:    number;
+  netAmount:     number;
+  fee:           number;
+  transactionId: string;
+}
