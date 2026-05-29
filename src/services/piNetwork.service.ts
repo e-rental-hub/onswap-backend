@@ -301,7 +301,7 @@ export async function transferPi(
       amount:      amount,
     }))
     .addMemo(StellarSdk.Memo.text(memoText))
-    .setTimeout(180)
+    .setTimeout(0)
     .build();
 
   tx.sign(keypair);

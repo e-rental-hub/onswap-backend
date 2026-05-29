@@ -108,8 +108,12 @@ export const completeDeposit = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
+    // completePiPayment is also idempotent on Pi's side — safe to call twice
     const { success, payment, error } = await completePiPayment(paymentId, txid);
-    if (!success) { res.status(400).json({ success: false, message: error }); return; }
+    if (!success) {
+      res.status(400).json({ success: false, message: error });
+      return;
+    }
 
     const userId  = new mongoose.Types.ObjectId(req.user!.id);
     const userUid = req.user!.piUid;
@@ -123,7 +127,10 @@ export const completeDeposit = async (req: AuthRequest, res: Response): Promise<
       `Pi deposit — ${new Date().toLocaleDateString()}`
     );
 
-    logger.info(`[Wallet] Deposit complete: uid=${userUid} net=${result.netAmount}π newBalance=${result.newBalance}π`);
+    logger.info(
+      `[Wallet] Deposit complete: uid=${userUid} net=${result.netAmount}π newBalance=${result.newBalance}π`
+    );
+    // Always return 200 — Pi SDK retries on non-2xx, causing more duplicates
     res.json({
       success:       true,
       newBalance:    result.newBalance,
@@ -131,6 +138,7 @@ export const completeDeposit = async (req: AuthRequest, res: Response): Promise<
       fee:           result.fee,
       transactionId: result.transactionId,
     });
+
   } catch (err) {
     logger.error('completeDeposit error:', err);
     res.status(500).json({ success: false, message: 'Failed to complete deposit' });

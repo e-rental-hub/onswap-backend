@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { AdTypeEnum, CurrencyEnum, PaymentMethodEnum } from '../models/enum';
 
 // ─── Payment method ───────────────────────────────────────────────────────────
 
 export const paymentMethodDetailSchema = z.object({
-  type:          z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
+  type:          z.nativeEnum(PaymentMethodEnum),
   label:         z.string().min(1).max(60),
   accountName:   z.string().min(1).max(80),
   accountNumber: z.string().min(1).max(20),
@@ -79,24 +80,17 @@ export const incompleteDepositSchema = z.object({
 // ─── Ads ──────────────────────────────────────────────────────────────────────
 
 export const createAdSchema = z.object({
-  type:       z.enum(['buy', 'sell']),
+  type:       z.nativeEnum(AdTypeEnum),
   piAmount:   z.number().positive(),
   minLimit:   z.number().positive(),
   maxLimit:   z.number().positive(),
   pricePerPi: z.number().positive(),
-  currency:   z.string().default('NGN'),
+  currency:   z.nativeEnum(CurrencyEnum).default(CurrencyEnum.naira).optional(),
   paymentMethods: z.array(
-    z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint'])
+    z.nativeEnum(PaymentMethodEnum)
   ).min(1),
-  paymentDetails: z.array(
-    z.object({
-      type:          z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
-      label:         z.string(),
-      accountName:   z.string().optional(),
-      accountNumber: z.string().optional(),
-      bankName:      z.string().optional(),
-    })
-  ).optional().default([]),
+  sellerAccountDetailId: z.string().min(1).optional(),
+  buyerPiWalletId:    z.string().min(1).optional(),
   paymentWindow: z.number().min(5).max(120).default(15),
   terms:         z.string().max(500).optional(),
   autoReply:     z.string().max(300).optional(),
@@ -111,17 +105,10 @@ export const updateAdSchema = z.object({
   maxLimit:      z.number().positive().optional(),
   // Payment
   paymentMethods: z.array(
-    z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint'])
+    z.nativeEnum(PaymentMethodEnum)
   ).min(1).optional(),
-  paymentDetails: z.array(
-    z.object({
-      type:          z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
-      label:         z.string(),
-      accountName:   z.string().optional(),
-      accountNumber: z.string().optional(),
-      bankName:      z.string().optional(),
-    })
-  ).optional(),
+  sellerAccountDetailId:z.string().min(1).optional(),
+  buyerPiWalletId:    z.string().min(1).optional(),
   paymentWindow:  z.number().min(5).max(120).optional(),
   terms:          z.string().max(500).optional(),
   autoReply:      z.string().max(300).optional(),
@@ -137,16 +124,9 @@ export const updateAdSchema = z.object({
 export const createOrderSchema = z.object({
   adId:               z.string().min(1),
   piAmount:           z.number().positive(),
-  paymentMethod:      z.enum(['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint']),
-  /**
-   * Buyer's on-chain Pi/Stellar wallet address (starts with G...).
-   * Validated as a 56-character Stellar public key.
-   * Used by seller to release Pi via A2U transfer on trade completion.
-   */
-  buyerWalletAddress: z.string()
-    .min(56, 'Pi wallet address must be 56 characters')
-    .max(56, 'Pi wallet address must be 56 characters')
-    .regex(/^G[A-Z2-7]{55}$/, 'Invalid Pi wallet address — must start with G followed by 55 uppercase letters/numbers'),
+  paymentMethod:      z.nativeEnum(PaymentMethodEnum),
+  sellerAccountDetailId: z.string().min(1).optional(),
+  buyerWalletAddressId: z.string().min(1).optional(),
 });
 
 export const sendMessageSchema = z.object({

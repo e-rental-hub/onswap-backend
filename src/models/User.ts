@@ -1,17 +1,11 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { PaymentMethodEnum } from './enum';
 
 // ─── Payment Method ───────────────────────────────────────────────────────────
 
-export type PaymentMethodType =
-  | 'bank_transfer'
-  | 'opay'
-  | 'palmpay'
-  | 'kuda'
-  | 'moniepoint';
-
-export interface IPaymentMethodDetail {
+export interface IUserAccountDetail {
   _id: Types.ObjectId;
-  type: PaymentMethodType;
+  type: PaymentMethodEnum;
   label: string;
   accountName: string;
   accountNumber: string;
@@ -20,13 +14,13 @@ export interface IPaymentMethodDetail {
   createdAt: Date;
 }
 
-export type IPaymentMethodDetailDoc = IPaymentMethodDetail & Types.Subdocument;
+export type IUserAccountDetailDoc = IUserAccountDetail & Types.Subdocument;
 
-const PaymentMethodDetailSchema = new Schema<IPaymentMethodDetailDoc>(
+export const UserAccountDetailSchema = new Schema<IUserAccountDetailDoc>(
   {
     type: {
       type: String,
-      enum: ['bank_transfer', 'opay', 'palmpay', 'kuda', 'moniepoint'],
+      enum: PaymentMethodEnum,
       required: true,
     },
     label:         { type: String, required: true, trim: true, maxlength: 60 },
@@ -80,14 +74,8 @@ const PiWalletAddressSchema = new Schema<IPiWalletAddressDoc>(
 export interface IUser extends Document<Types.ObjectId> {
   piUid:         string;
   username:      string;
-  accessToken:   string;
   displayName:   string;
   phone?:        string;
-  /**
-   * On-chain Stellar public key — captured from Pi /v2/me at login.
-   * Used to send Pi directly to the user's wallet without a /v2/users lookup.
-   */
-  walletAddress?: string;
 
   // ── In-app wallet ──────────────────────────────────────────────────────────
   /**
@@ -107,7 +95,7 @@ export interface IUser extends Document<Types.ObjectId> {
   totalTrades:     number;
   completedTrades: number;
 
-  paymentMethods: Types.DocumentArray<IPaymentMethodDetailDoc>;
+  userAccountDetails: Types.DocumentArray<IUserAccountDetailDoc>;
   /** Saved Pi wallet addresses (for receiving Pi from escrow release) */
   piWalletAddresses: Types.DocumentArray<IPiWalletAddressDoc>;
 
@@ -123,10 +111,8 @@ const UserSchema = new Schema<IUser>(
   {
     piUid:         { type: String, required: true, unique: true, index: true },
     username:      { type: String, required: true, trim: true },
-    accessToken:   { type: String, required: true },
     displayName:   { type: String, required: true, trim: true, maxlength: 60 },
     phone:         { type: String, trim: true },
-    walletAddress: { type: String, trim: true, sparse: true },
 
     piBalance:     { type: Number, default: 0, min: 0 },
     lockedBalance: { type: Number, default: 0, min: 0 },
@@ -136,7 +122,7 @@ const UserSchema = new Schema<IUser>(
     totalTrades:     { type: Number, default: 0 },
     completedTrades: { type: Number, default: 0 },
 
-    paymentMethods:    { type: [PaymentMethodDetailSchema], default: [] },
+    userAccountDetails:    { type: [UserAccountDetailSchema], default: [] },
     piWalletAddresses: { type: [PiWalletAddressSchema],    default: [] },
   },
   { timestamps: true }
