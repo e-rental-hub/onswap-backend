@@ -18,11 +18,12 @@
 /.next/
 /out/
 .next-*
+/dist
+/logs
 
 # production
 /build
-/.dist
-/logs/
+logs
 
 # misc
 .DS_Store

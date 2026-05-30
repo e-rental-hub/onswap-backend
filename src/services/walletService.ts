@@ -2,20 +2,13 @@ import mongoose, { ClientSession, Types } from 'mongoose';
 import { User }                           from '../models/User';
 import { WalletTransaction, TxType }      from '../models/WalletTransaction';
 import { logger }                         from '../utils/logger';
+import { CreditResult } from '../types';
+import { fetchExistingDepositResult, isDuplicateKeyError } from '../helpers';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 export const DEPOSIT_FEE_RATE = Number(process.env.DEPOSIT_FEE_RATE ?? 0.01); // 1 %
 export const MIN_DEPOSIT_PI   = Number(process.env.MIN_DEPOSIT_PI   ?? 1);
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface CreditResult {
-  newBalance:    number;
-  netAmount:     number;
-  fee:           number;
-  transactionId: string;
-}
 
 // ─── Internal helper ──────────────────────────────────────────────────────────
 
@@ -61,28 +54,13 @@ export async function creditDeposit(
   piTxId:      string,
   memo = 'Pi deposit'
 ): Promise<CreditResult> {
-  // Idempotency guard — never double-credit the same Pi payment
-  const existing = await WalletTransaction.findOne({
-    piPaymentId,
-    type:   'deposit',
-    status: 'confirmed',
-  });
-  if (existing) {
-    logger.warn(`[Wallet] Duplicate deposit ignored: ${piPaymentId}`);
-    const user = await User.findById(userId).lean();
-    return {
-      newBalance:    user?.piBalance ?? 0,
-      netAmount:     existing.netAmount,
-      fee:           existing.fee,
-      transactionId: existing._id.toString(),
-    };
-  }
 
   const fee       = r4(grossAmount * DEPOSIT_FEE_RATE);
   const netAmount = r4(grossAmount - fee);
 
   const session = await mongoose.startSession();
   session.startTransaction();
+
   try {
     const user = await User.findById(userId).session(session);
     if (!user) throw new Error('User not found');
@@ -104,7 +82,7 @@ export async function creditDeposit(
         userId: user._id, userUid, type: 'deposit_charge',
         amount: fee, fee: 0, netAmount: fee,
         balanceBefore: balanceAfter, balanceAfter,
-        status: 'confirmed', piPaymentId,
+        status: 'confirmed', piPaymentId: 'fee_' + piPaymentId,
         memo: 'Deposit platform fee',
       });
     }
@@ -112,8 +90,16 @@ export async function creditDeposit(
     await session.commitTransaction();
     logger.info(`[Wallet] Deposit: uid=${userUid} gross=${grossAmount}π fee=${fee}π net=${netAmount}π`);
     return { newBalance: balanceAfter, netAmount, fee, transactionId: tx._id.toString() };
+
   } catch (err) {
     await session.abortTransaction();
+
+    // ── Idempotency: another request already committed this payment ──
+    if (isDuplicateKeyError(err, 'piPaymentId')) {
+      logger.warn(`[Wallet] Duplicate deposit caught post-insert, returning existing: ${piPaymentId}`);
+      return fetchExistingDepositResult(userId, piPaymentId);
+    }
+
     throw err;
   } finally {
     session.endSession();

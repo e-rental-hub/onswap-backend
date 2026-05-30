@@ -1,6 +1,6 @@
 import { Response }    from 'express';
 import mongoose        from 'mongoose';
-import { Ad, IAd }     from '../models/Ad';
+import { Ad, IAd, IAdSellerAccountDetail } from '../models/Ad';
 import { User }        from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 import {
@@ -11,6 +11,7 @@ import {
   refundEscrow,
 } from '../services/walletService';
 import { logger } from '../utils/logger';
+import { AdStatusEnum, AdTypeEnum, CurrencyEnum, OrderStatusEnum, PaymentMethodEnum } from '../models/enum';
 
 // ─── GET /ads ─────────────────────────────────────────────────────────────────
 
@@ -22,11 +23,11 @@ export const getAds = async (req: AuthRequest, res: Response): Promise<void> => 
     } = req.query;
 
     const filter: Record<string, unknown> = { status: 'active' };
-    if (type)          filter.type            = type;
-    if (currency)      filter.currency        = currency;
-    if (paymentMethod) filter.paymentMethods  = { $in: [paymentMethod] };
-    if (minAmount)     filter.maxLimit        = { $gte: Number(minAmount) };
-    if (maxAmount)     filter.minLimit        = { $lte: Number(maxAmount) };
+    if (type)          filter.type           = type;
+    if (currency)      filter.currency       = currency;
+    if (paymentMethod) filter.paymentMethods = { $in: [paymentMethod] };
+    if (minAmount)     filter.maxLimit       = { $gte: Number(minAmount) };
+    if (maxAmount)     filter.minLimit       = { $lte: Number(maxAmount) };
 
     const skip = (Number(page) - 1) * Number(limit);
     const [ads, total] = await Promise.all([
@@ -72,6 +73,12 @@ export const getAdById = async (req: AuthRequest, res: Response): Promise<void> 
 };
 
 // ─── POST /ads ────────────────────────────────────────────────────────────────
+//
+// Sell ad: sellerAccountDetail is required — a payment account snapshot is
+//   stored on the ad so orders can copy it without an extra User lookup.
+//
+// Buy ad: buyerPiWalletAddress is required — the buyer's Stellar public key
+//   is stored on the ad so orders can copy it without an extra User lookup.
 
 export const createAd = async (req: AuthRequest, res: Response): Promise<void> => {
   const session = await mongoose.startSession();
@@ -80,31 +87,41 @@ export const createAd = async (req: AuthRequest, res: Response): Promise<void> =
     const userId = req.user!.id;
     const {
       type, piAmount, minLimit, maxLimit, pricePerPi,
-      currency, paymentMethods, paymentDetails,
-      paymentWindow, terms, autoReply,
+      currency, paymentMethods, sellerAccountDetailId,
+      buyerPiWalletId, paymentWindow, terms, autoReply,
     } = req.body as {
-      type: 'buy' | 'sell';
-      piAmount: number;
-      minLimit: number;
-      maxLimit: number;
-      pricePerPi: number;
-      currency?: string;
-      paymentMethods: string[];
-      paymentDetails: IAd['paymentDetails'];
-      paymentWindow: number;
-      terms?: string;
-      autoReply?: string;
+      type:                 AdTypeEnum;         // ← AdTypeEnum, not typeof AdTypeEnum
+      piAmount:             number;
+      minLimit:             number;
+      maxLimit:             number;
+      pricePerPi:           number;
+      currency?:            string;
+      paymentMethods:       PaymentMethodEnum[];
+      sellerAccountDetailId?: string;
+      buyerPiWalletId?: string;
+      paymentWindow:        number;
+      terms?:               string;
+      autoReply?:           string;
     };
 
-    // ── Sell-ad: check balance BEFORE creating the ad document ────────────
-    if (type === 'sell') {
-      const user = await User.findById(userId).session(session);
-      if (!user) {
-        await session.abortTransaction();
-        res.status(404).json({ success: false, message: 'User not found' });
-        return;
-      }
+    const payload = req.body
 
+    console.log('request: ', payload);
+
+    const user = await User.findById(userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    let sellerAccountDetail: IAdSellerAccountDetail | undefined;
+    let buyerPiWalletAddress: string | undefined;
+
+    // ── Type-specific field validation ────────────────────────────────────
+    if (type === AdTypeEnum.sell) {
+      
+      // ── Sell-ad: check balance BEFORE creating the ad document ────────────
       if (user.piBalance < piAmount) {
         await session.abortTransaction();
         res.status(400).json({
@@ -117,33 +134,66 @@ export const createAd = async (req: AuthRequest, res: Response): Promise<void> =
         });
         return;
       }
+
+      if (!sellerAccountDetailId) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'seller must select an account detail for a sell ad.' });
+        return;
+      }
+
+      const savedAccount = user.userAccountDetails.id(sellerAccountDetailId);
+      if (!savedAccount) {
+        res.status(400).json({ success: false, message: 'seller account detail not found.' });
+        return;
+      }
+
+      sellerAccountDetail = {
+        type: savedAccount.type,
+        label: savedAccount.label,
+        accountName: savedAccount.accountName,
+        accountNumber: savedAccount.accountNumber,
+        bankName: savedAccount.bankName,
+      };
+    } else {
+      // buy ad
+      if (!buyerPiWalletId) {
+        await session.abortTransaction();
+        res.status(400).json({ success: false, message: 'buyer must select a Pi wallet for a buy ad.' });
+        return;
+      }
+
+      const savedUserWallet = user.piWalletAddresses.id(buyerPiWalletId);
+      if (!savedUserWallet) {
+        res.status(400).json({ success: false, message: 'buyer wallet not found.' });
+        return;
+      }
+
+      buyerPiWalletAddress = savedUserWallet.address;
     }
 
     const [ad] = await Ad.create(
       [{
-        creator:         userId,
+        creator: userId,
         type,
         piAmount,
         availableAmount: piAmount,
         minLimit,
         maxLimit,
         pricePerPi,
-        currency:        currency ?? 'NGN',
-        paymentMethods,
-        paymentDetails:  paymentDetails ?? [],
+        currency:            currency ?? CurrencyEnum.naira,
+        paymentMethods:      paymentMethods as PaymentMethodEnum[],
+        sellerAccountDetail: type === AdTypeEnum.sell ? sellerAccountDetail : undefined,
+        buyerWalletAddress:  type === AdTypeEnum.buy  ? buyerPiWalletAddress : undefined,
         paymentWindow,
         terms,
         autoReply,
-        // reservedPi tracks how much is CURRENTLY locked from the seller's
-        // lockedBalance for this ad. Starts equal to piAmount, decrements
-        // as orders are filled, zeroes on cancel/completion.
-        reservedPi: type === 'sell' ? piAmount : 0,
+        reservedPi: type === AdTypeEnum.sell ? piAmount : 0,
       }],
       { session }
     );
 
     // ── Sell-ad: move piBalance → lockedBalance atomically ───────────────
-    if (type === 'sell') {
+    if (type === AdTypeEnum.sell) {
       await reserveForAd(
         session,
         new mongoose.Types.ObjectId(userId),
@@ -195,7 +245,7 @@ export const updateAd = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    if (ad.status === 'cancelled' || ad.status === 'completed') {
+    if (ad.status === AdStatusEnum.cancelled || ad.status === AdStatusEnum.completed) {
       await session.abortTransaction();
       res.status(400).json({ success: false, message: 'Cannot edit a cancelled or completed ad' });
       return;
@@ -207,12 +257,11 @@ export const updateAd = async (req: AuthRequest, res: Response): Promise<void> =
     >>;
 
     // ── Financial field: piAmount (sell ads only) ─────────────────────────
-    if (b.piAmount !== undefined && ad.type === 'sell') {
+    if (b.piAmount !== undefined && ad.type === AdTypeEnum.sell) {
       const newPiAmount = b.piAmount;
       const oldPiAmount = ad.piAmount;
 
       // Cannot increase piAmount beyond what was originally listed
-      // (would require more Pi than was ever deposited for this ad)
       if (newPiAmount > oldPiAmount) {
         await session.abortTransaction();
         res.status(400).json({
@@ -241,8 +290,6 @@ export const updateAd = async (req: AuthRequest, res: Response): Promise<void> =
 
       // Delta based on reservedPi — the actual currently-locked amount
       const oldReserved = ad.reservedPi;
-      // New reservation = newPiAmount proportionally adjusted for traded volume
-      // Simpler: newReservation = newPiAmount - tradedAmount
       const newReserved = newPiAmount - tradedAmount;
 
       if (newReserved !== oldReserved) {
@@ -259,7 +306,7 @@ export const updateAd = async (req: AuthRequest, res: Response): Promise<void> =
       }
 
       ad.piAmount = newPiAmount;
-    } else if (b.piAmount !== undefined && ad.type === 'buy') {
+    } else if (b.piAmount !== undefined && ad.type === AdTypeEnum.buy) {
       // Buy ads carry no reserved Pi — just update the value
       ad.piAmount        = b.piAmount;
       ad.availableAmount = b.piAmount;
@@ -321,15 +368,18 @@ export const deleteAd = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    if (ad.status === 'cancelled') {
+    if (ad.status === AdStatusEnum.cancelled) {
       await session.abortTransaction();
       res.status(400).json({ success: false, message: 'Ad is already cancelled' });
       return;
     }
 
+    // Capture before zeroing so the log reflects the actual refunded amount
+    const refundedAmount = ad.reservedPi;
+
     // For sell ads, refund whatever is still reserved — this is `reservedPi`,
     // NOT `availableAmount`. The difference is Pi already released to buyers.
-    if (ad.type === 'sell' && ad.reservedPi > 0) {
+    if (ad.type === AdTypeEnum.sell && ad.reservedPi > 0) {
       await refundAdReservation(
         session,
         new mongoose.Types.ObjectId(req.user!.id),
@@ -339,12 +389,12 @@ export const deleteAd = async (req: AuthRequest, res: Response): Promise<void> =
       );
     }
 
-    ad.status     = 'cancelled';
+    ad.status     = AdStatusEnum.cancelled;
     ad.reservedPi = 0;                    // clear reservation record
     await ad.save({ session });
     await session.commitTransaction();
 
-    logger.info(`Ad ${ad._id} cancelled by ${req.user!.username}, refunded=${ad.reservedPi}π`);
+    logger.info(`Ad ${ad._id} cancelled by ${req.user!.username}, refunded=${refundedAmount}π`);
     res.json({ success: true, message: 'Ad cancelled and Pi returned to wallet' });
   } catch (err) {
     await session.abortTransaction();
@@ -357,7 +407,6 @@ export const deleteAd = async (req: AuthRequest, res: Response): Promise<void> =
 };
 
 // ─── Export lockForEscrow / refundEscrow for orderController ─────────────────
-// Re-exported so orderController imports from one place.
 export { lockForEscrow, refundEscrow };
 
 // ─── DELETE /ads/:id/hard ─────────────────────────────────────────────────────
@@ -370,7 +419,6 @@ export { lockForEscrow, refundEscrow };
 // This is intentionally a two-step process:
 //   Step 1 — cancel (refunds Pi, sets status=cancelled)
 //   Step 2 — hard delete (removes the document)
-// Keeping them separate protects against accidental deletion of active ads.
 
 export const hardDeleteAd = async (req: AuthRequest, res: Response): Promise<void> => {
   const session = await mongoose.startSession();
@@ -388,7 +436,7 @@ export const hardDeleteAd = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     // Must be cancelled first — this guarantees Pi has already been refunded
-    if (ad.status !== 'cancelled') {
+    if (ad.status !== AdStatusEnum.cancelled) {
       await session.abortTransaction();
       res.status(400).json({
         success: false,
@@ -398,11 +446,10 @@ export const hardDeleteAd = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     // Guard: no live orders referencing this ad
-    // Import Order model inline to avoid circular imports
     const { Order } = await import('../models/Order');
     const liveOrder = await Order.findOne({
       ad:     ad._id,
-      status: { $in: ['pending', 'payment_pending', 'payment_sent', 'disputed'] },
+      status: { $in: [OrderStatusEnum.paymentPending, OrderStatusEnum.paymentSent, OrderStatusEnum.disputed] },
     }).session(session);
 
     if (liveOrder) {

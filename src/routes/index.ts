@@ -2,8 +2,10 @@ import { Router } from 'express';
 
 import {
   piAuth, getMe, updateProfile,
-  getPaymentMethods, addPaymentMethod, updatePaymentMethod,
-  deletePaymentMethod, setDefaultPaymentMethod,
+  getuserAccountDetails, addUserAccountDetail, updateUserAccountDetail,
+  deleteUserAccountDetail, setDefaultUserAccountDetail,
+  getPiWalletAddresses, addPiWalletAddress, updatePiWalletAddress,
+  deletePiWalletAddress, setDefaultPiWalletAddress,
 } from '../controllers/authController';
 
 import {
@@ -19,6 +21,7 @@ import { authenticate, validateBody } from '../middleware/auth';
 import {
   piAuthSchema, updateProfileSchema,
   addPaymentMethodSchema, updatePaymentMethodSchema,
+  addPiWalletAddressSchema, updatePiWalletAddressSchema,
   approveDepositSchema, completeDepositSchema, cancelDepositSchema, incompleteDepositSchema,
   createAdSchema, updateAdSchema, createOrderSchema, sendMessageSchema, updateOrderStatusSchema,
 } from '../validators/schemas';
@@ -31,11 +34,19 @@ router.post('/auth/pi',      validateBody(piAuthSchema), piAuth);
 router.get ('/auth/me',      authenticate, getMe);
 router.patch('/auth/profile', authenticate, validateBody(updateProfileSchema), updateProfile);
 
-router.get   ('/auth/payment-methods',                  authenticate, getPaymentMethods);
-router.post  ('/auth/payment-methods',                  authenticate, validateBody(addPaymentMethodSchema), addPaymentMethod);
-router.patch ('/auth/payment-methods/:pmId',            authenticate, validateBody(updatePaymentMethodSchema), updatePaymentMethod);
-router.delete('/auth/payment-methods/:pmId',            authenticate, deletePaymentMethod);
-router.patch ('/auth/payment-methods/:pmId/set-default',authenticate, setDefaultPaymentMethod);
+router.get   ('/auth/account-details',                  authenticate, getuserAccountDetails);
+router.post  ('/auth/account-details',                  authenticate, validateBody(addPaymentMethodSchema), addUserAccountDetail);
+router.patch ('/auth/account-details/:pmId',            authenticate, validateBody(updatePaymentMethodSchema), updateUserAccountDetail);
+router.delete('/auth/account-details/:pmId',            authenticate, deleteUserAccountDetail);
+router.patch ('/auth/account-details/:pmId/set-default',authenticate, setDefaultUserAccountDetail);
+
+// ─── Pi Wallet Addresses ──────────────────────────────────────────────────────
+
+router.get   ('/auth/pi-wallets',                  authenticate, getPiWalletAddresses);
+router.post  ('/auth/pi-wallets',                  authenticate, validateBody(addPiWalletAddressSchema),    addPiWalletAddress);
+router.patch ('/auth/pi-wallets/:waId',            authenticate, validateBody(updatePiWalletAddressSchema), updatePiWalletAddress);
+router.delete('/auth/pi-wallets/:waId',            authenticate, deletePiWalletAddress);
+router.patch ('/auth/pi-wallets/:waId/set-default',authenticate, setDefaultPiWalletAddress);
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +74,6 @@ router.post  ('/orders',                  authenticate, validateBody(createOrder
 router.get   ('/orders',                  authenticate, getOrders);
 router.get   ('/orders/:id',              authenticate, getOrderById);
 router.patch ('/orders/:id/status',       authenticate, validateBody(updateOrderStatusSchema), updateOrderStatus);
-router.post  ('/orders/:id/messages',     authenticate, sendMessage);
+router.post  ('/orders/:id/messages',     authenticate, validateBody(sendMessageSchema), sendMessage);
 
 export default router;
