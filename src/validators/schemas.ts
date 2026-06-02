@@ -27,6 +27,10 @@ export const updateProfileSchema = z.object({
   phone:       z.string().optional(),
 });
 
+export const setUserCurrencySchema = z.object({
+  currency: z.nativeEnum(CurrencyEnum),
+});
+
 // ─── Saved payment methods ────────────────────────────────────────────────────
 
 export const addPaymentMethodSchema    = paymentMethodDetailSchema;
@@ -85,7 +89,7 @@ export const createAdSchema = z.object({
   minLimit:   z.number().positive(),
   maxLimit:   z.number().positive(),
   pricePerPi: z.number().positive(),
-  currency:   z.nativeEnum(CurrencyEnum).default(CurrencyEnum.naira).optional(),
+  currency:   z.nativeEnum(CurrencyEnum).default(CurrencyEnum.NGN).optional(),
   paymentMethods: z.array(
     z.nativeEnum(PaymentMethodEnum)
   ).min(1),

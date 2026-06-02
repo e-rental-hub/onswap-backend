@@ -6,6 +6,7 @@ import {
   deleteUserAccountDetail, setDefaultUserAccountDetail,
   getPiWalletAddresses, addPiWalletAddress, updatePiWalletAddress,
   deletePiWalletAddress, setDefaultPiWalletAddress,
+  setPreferredCurrency,
 } from '../controllers/authController';
 
 import {
@@ -24,6 +25,7 @@ import {
   addPiWalletAddressSchema, updatePiWalletAddressSchema,
   approveDepositSchema, completeDepositSchema, cancelDepositSchema, incompleteDepositSchema,
   createAdSchema, updateAdSchema, createOrderSchema, sendMessageSchema, updateOrderStatusSchema,
+  setUserCurrencySchema,
 } from '../validators/schemas';
 
 const router = Router();
@@ -34,12 +36,14 @@ router.post('/auth/pi',      validateBody(piAuthSchema), piAuth);
 router.get ('/auth/me',      authenticate, getMe);
 router.patch('/auth/profile', authenticate, validateBody(updateProfileSchema), updateProfile);
 
+router.post ('/auth/set-currency',                      authenticate, validateBody(setUserCurrencySchema), setPreferredCurrency);
+
 router.get   ('/auth/account-details',                  authenticate, getuserAccountDetails);
 router.post  ('/auth/account-details',                  authenticate, validateBody(addPaymentMethodSchema), addUserAccountDetail);
 router.patch ('/auth/account-details/:pmId',            authenticate, validateBody(updatePaymentMethodSchema), updateUserAccountDetail);
 router.delete('/auth/account-details/:pmId',            authenticate, deleteUserAccountDetail);
 router.patch ('/auth/account-details/:pmId/set-default',authenticate, setDefaultUserAccountDetail);
-
+  
 // ─── Pi Wallet Addresses ──────────────────────────────────────────────────────
 
 router.get   ('/auth/pi-wallets',                  authenticate, getPiWalletAddresses);
