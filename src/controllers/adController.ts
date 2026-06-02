@@ -18,7 +18,7 @@ import { AdStatusEnum, AdTypeEnum, CurrencyEnum, OrderStatusEnum, PaymentMethodE
 export const getAds = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      type, currency = 'NGN', paymentMethod,
+      type, currency = CurrencyEnum.NGN, paymentMethod,
       minAmount, maxAmount, page = 1, limit = 20,
     } = req.query;
 
@@ -95,7 +95,7 @@ export const createAd = async (req: AuthRequest, res: Response): Promise<void> =
       minLimit:             number;
       maxLimit:             number;
       pricePerPi:           number;
-      currency?:            string;
+      currency?:            CurrencyEnum;
       paymentMethods:       PaymentMethodEnum[];
       sellerAccountDetailId?: string;
       buyerPiWalletId?: string;
@@ -180,7 +180,7 @@ export const createAd = async (req: AuthRequest, res: Response): Promise<void> =
         minLimit,
         maxLimit,
         pricePerPi,
-        currency:            currency ?? CurrencyEnum.naira,
+        currency:            currency ?? CurrencyEnum.NGN,
         paymentMethods:      paymentMethods as PaymentMethodEnum[],
         sellerAccountDetail: type === AdTypeEnum.sell ? sellerAccountDetail : undefined,
         buyerWalletAddress:  type === AdTypeEnum.buy  ? buyerPiWalletAddress : undefined,

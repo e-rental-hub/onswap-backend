@@ -94,7 +94,7 @@ const OrderSchema = new Schema<IOrder>(
     piAmount:    { type: Number, required: true, min: 0 },
     nairaAmount: { type: Number, required: true, min: 0 },
     pricePerPi:  { type: Number, required: true },
-    currency:    { type: String, enum: CurrencyEnum, default: CurrencyEnum.naira },
+    currency:    { type: String, enum: CurrencyEnum, default: CurrencyEnum.NGN },
 
     paymentMethod: { type: String, enum: PaymentMethodEnum, required: true },
 

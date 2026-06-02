@@ -6,6 +6,7 @@ import { verifyPiToken }     from '../services/piNetwork.service';
 import { AuthRequest }       from '../middleware/auth';
 import { logger }            from '../utils/logger';
 import { config } from '../config';
+import { CurrencyEnum } from '../models/enum';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -377,10 +378,31 @@ export const setDefaultPiWalletAddress = async (req: AuthRequest, res: Response)
     wa.isDefault = true;
 
     await user.save();
-    logger.info(`Default Pi wallet address set: ${wa._id} for ${user.username}`);
+    // logger.info(`Default Pi wallet address set: ${wa._id} for ${user.username}`);
     res.json({ success: true, piWalletAddresses: user.piWalletAddresses });
   } catch (err) {
     logger.error('setDefaultPiWalletAddress error:', err);
     res.status(500).json({ success: false, message: 'Failed to set default wallet address' });
+  }
+};
+
+// ─── User Preferred Currency ──────────────────────────────────────────────────────
+
+export const setPreferredCurrency = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { currency } = req.body as {
+      currency: CurrencyEnum;
+    };
+
+    const user = await User.findById(req.user!.id);
+    if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
+
+    user.preferredCurrency = currency;
+    await user.save();
+    // logger.info(`Preferred currency set for ${user.username}: ${currency}`);
+    res.json({ success: true, preferredCurrency: user.preferredCurrency });
+  } catch (err) {
+    logger.error('setPreferredCurrency error:', err);
+    res.status(500).json({ success: false, message: 'Failed to set preferred currency' });
   }
 };

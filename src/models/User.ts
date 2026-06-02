@@ -1,5 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { PaymentMethodEnum } from './enum';
+import { CurrencyEnum, PaymentMethodEnum } from './enum';
 
 // ─── Payment Method ───────────────────────────────────────────────────────────
 
@@ -98,6 +98,7 @@ export interface IUser extends Document<Types.ObjectId> {
   userAccountDetails: Types.DocumentArray<IUserAccountDetailDoc>;
   /** Saved Pi wallet addresses (for receiving Pi from escrow release) */
   piWalletAddresses: Types.DocumentArray<IPiWalletAddressDoc>;
+  preferredCurrency: CurrencyEnum;
 
   createdAt: Date;
   updatedAt: Date;
@@ -124,6 +125,7 @@ const UserSchema = new Schema<IUser>(
 
     userAccountDetails:    { type: [UserAccountDetailSchema], default: [] },
     piWalletAddresses: { type: [PiWalletAddressSchema],    default: [] },
+    preferredCurrency:    { type: String, enum: CurrencyEnum, default: CurrencyEnum.NGN },
   },
   { timestamps: true }
 );

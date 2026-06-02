@@ -61,7 +61,7 @@ const AdSchema = new Schema<IAd>(
     minLimit:        { type: Number, required: true, min: 1 },
     maxLimit:        { type: Number, required: true },
     pricePerPi:      { type: Number, required: true, min: 0 },
-    currency:        { type: String, enum: CurrencyEnum, default: CurrencyEnum.naira },
+    currency:        { type: String, enum: CurrencyEnum, default: CurrencyEnum.NGN },
     paymentMethods:  [{ type: String, enum: PaymentMethodEnum }],
 
     sellerAccountDetail: {
