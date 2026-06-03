@@ -31,6 +31,7 @@ const safeUser = (user: InstanceType<typeof User>) => ({
   totalTrades:     user.totalTrades,
   completedTrades: user.completedTrades,
   completionRate:  user.completionRate,
+  preferredCurrency: user.preferredCurrency,
   // Wallet balances — included so the frontend can bootstrap without a separate /wallet/balance call
   piBalance:       user.piBalance,
   lockedBalance:   user.lockedBalance,
@@ -61,6 +62,7 @@ function toId(field: unknown): string {
  *  4. Upsert user (create on first login, update token on subsequent logins)
  *  5. Return our own JWT + user profile
  */
+// piAuth controller
 export const piAuth = async (req: Request, res: Response): Promise<void> => {
   try {
     const { accessToken, uid: claimedUid, displayName, phone } = req.body as {
@@ -71,30 +73,26 @@ export const piAuth = async (req: Request, res: Response): Promise<void> => {
       phone?: string;
     };
 
-    // ── Step 1: Verify token with Pi Platform ──
     const piIdentity = await verifyPiToken(accessToken);
 
-    // ── Step 2: Guard against spoofed uid/username in request body ──
     if (piIdentity.uid !== claimedUid) {
       logger.warn(`Pi uid mismatch: claimed=${claimedUid} verified=${piIdentity.uid}`);
       res.status(401).json({ success: false, message: 'Pi identity mismatch — authentication rejected' });
       return;
     }
 
-    // ── Step 3: Upsert user ──
     let user = await User.findOne({ piUid: piIdentity.uid });
 
     if (!user) {
-      // First login — create account
       user = await User.create({
-        piUid:         piIdentity.uid,
-        username:      piIdentity.username,
-        displayName:   displayName || piIdentity.username,
-        phone
+        piUid:       piIdentity.uid,
+        username:    piIdentity.username,
+        displayName: displayName || piIdentity.username,
+        phone,
       });
       logger.info(`New pioneer registered: ${piIdentity.username} (uid=${piIdentity.uid})`);
     } else {
-      user.username    = piIdentity.username;
+      user.username = piIdentity.username;
       if (displayName) user.displayName = displayName;
       if (phone)       user.phone       = phone;
       await user.save();
@@ -103,6 +101,17 @@ export const piAuth = async (req: Request, res: Response): Promise<void> => {
 
     const token = signToken(user.id, user.piUid, user.username);
 
+    // FIX 1: Set cookie BEFORE sending the response
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure:   config.nodeEnv === 'production',
+      maxAge:   1 * 24 * 60 * 60 * 1000, // 1 day
+    });
+
+    // FIX 2: No need to send token in body anymore — cookie carries it.
+    // Keep it for now if you want a graceful transition period, but
+    // the client should stop storing it.
     res.status(user.isNew ? 201 : 200).json({
       success: true,
       token,
@@ -126,6 +135,17 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
     logger.error('getMe error:', err);
     res.status(500).json({ success: false, message: 'Failed to load profile' });
   }
+};
+
+// ─── Logout current user ─────────────────────────────────────────────────────────
+
+export const logout = (_req: Request, res: Response): void => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure:   config.nodeEnv === 'production',
+  });
+  res.json({ success: true });
 };
 
 // ─── Update profile ───────────────────────────────────────────────────────────

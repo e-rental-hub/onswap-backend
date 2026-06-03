@@ -18,26 +18,33 @@ export interface AuthRequest extends Request {
 
 // ─── JWT authentication guard ─────────────────────────────────────────────────
 
+// authenticate middleware — reads cookie first, falls back to Bearer header
 export const authenticate = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
+    // FIX 3: Prefer httpOnly cookie; fall back to Bearer for any non-browser
+    // clients (e.g. mobile app, API consumers) during transition
+    const token =
+      req.cookies?.token ??
+      req.headers.authorization?.replace('Bearer ', '');
+
+    // Temporary debug log — remove after confirming
+    // logger.debug(`auth: cookie=${!!req.cookies?.token} header=${!!req.headers.authorization} resolved=${!!token}`);
+
+    if (!token) {
       res.status(401).json({ success: false, message: 'No token provided' });
       return;
     }
 
-    const token = header.replace('Bearer ', '');
     const decoded = jwt.verify(token, JWT_SECRET) as {
       id: string;
       piUid: string;
       username: string;
     };
 
-    // Confirm the user still exists in the DB (handles deleted accounts)
     const exists = await User.exists({ _id: decoded.id, piUid: decoded.piUid });
     if (!exists) {
       res.status(401).json({ success: false, message: 'Account not found' });

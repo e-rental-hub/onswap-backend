@@ -7,6 +7,7 @@ import {
   getPiWalletAddresses, addPiWalletAddress, updatePiWalletAddress,
   deletePiWalletAddress, setDefaultPiWalletAddress,
   setPreferredCurrency,
+  logout,
 } from '../controllers/authController';
 
 import {
@@ -35,6 +36,7 @@ const router = Router();
 router.post('/auth/pi',      validateBody(piAuthSchema), piAuth);
 router.get ('/auth/me',      authenticate, getMe);
 router.patch('/auth/profile', authenticate, validateBody(updateProfileSchema), updateProfile);
+router.post ('/auth/logout',  authenticate, logout);
 
 router.post ('/auth/set-currency',                      authenticate, validateBody(setUserCurrencySchema), setPreferredCurrency);
 
