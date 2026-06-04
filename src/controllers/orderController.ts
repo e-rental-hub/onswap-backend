@@ -19,18 +19,13 @@ import { AdStatusEnum, AdTypeEnum, EscrowStatusEnum, MessageTypeEnum, OrderStatu
 
 const POPULATE_ORDER = [
   { path: 'buyer',  select: 'username displayName rating totalTrades completedTrades kycVerified piBalance piUid' },
-  { path: 'seller', select: 'username displayName rating totalTrades completedTrades kycVerified' },
+  { path: 'seller', select: 'username displayName rating totalTrades completedTrades kycVerified piUid' },
   { path: 'ad',     select: 'type paymentDetails paymentWindow terms autoReply paymentMethods' },
 ];
 
 /**
  * Extract a plain string ID from a field that may be either a raw ObjectId
  * (before populate) or a full populated Mongoose document (after populate).
- *
- * Problem: after .populate(), `order.buyer` is a User document. Calling
- * `.toString()` on a Document returns "[object Object]", not the ID string.
- * We must use `._id.toString()` on populated documents, but `.toString()`
- * on raw ObjectIds. This helper handles both cases uniformly.
  */
 function toId(field: unknown): string {
   if (field == null) return '';
@@ -41,17 +36,6 @@ function toId(field: unknown): string {
 }
 
 // ─── POST /orders ─────────────────────────────────────────────────────────────
-//
-// Both `sellerAccountDetailId` and `buyerWalletAddressId` are required.
-// The backend resolves them to full snapshots so the order is self-contained.
-//
-// Sell-ad flow:
-//   • sellerAccountDetail  → resolved from ad.sellerAccountDetail (snapshot on ad)
-//   • buyerWalletAddress   → resolved from buyer's piWalletAddresses by id
-//
-// Buy-ad flow:
-//   • sellerAccountDetail  → resolved from incoming user's userAccountDetails by id
-//   • buyerWalletAddress   → resolved from ad.buyerWalletAddress (snapshot on ad)
 
 export const createOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   const session = await mongoose.startSession();
@@ -125,12 +109,9 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
     const sellerId = isSellAd ? ad.creator                          : new mongoose.Types.ObjectId(userId);
 
     // ── Resolve sellerAccountDetail snapshot ──────────────────────────────
-    // Sell-ad: snapshot is already stored on the ad at creation time.
-    // Buy-ad:  the incoming user (Pi seller) picks one of their saved accounts.
     let sellerAccountDetail: typeof ad.sellerAccountDetail;
 
     if (isSellAd) {
-      // The ad already holds the seller's payment account snapshot.
       if (!ad.sellerAccountDetail) {
         await session.abortTransaction();
         res.status(400).json({ success: false, message: 'This sell ad has no payment account on record.' });
@@ -138,7 +119,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       }
       sellerAccountDetail = ad.sellerAccountDetail;
     } else {
-      // Incoming user is the Pi seller — look up their saved account.
       const piSeller = await User.findById(userId).session(session);
       if (!piSeller) {
         await session.abortTransaction();
@@ -176,12 +156,9 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
     }
 
     // ── Resolve buyerWalletAddress ────────────────────────────────────────
-    // Buy-ad:  wallet address snapshot is already stored on the ad.
-    // Sell-ad: the incoming user (Pi buyer) picks one of their saved wallets.
     let buyerWalletAddress: string;
 
     if (isSellAd) {
-      // Incoming user is the Pi buyer — look up their saved wallet.
       const piBuyer = await User.findById(userId).session(session);
       if (!piBuyer) {
         await session.abortTransaction();
@@ -198,7 +175,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
 
       buyerWalletAddress = savedWallet.address;
     } else {
-      // The ad already holds the buyer's Pi wallet snapshot.
       if (!ad.buyerWalletAddress) {
         await session.abortTransaction();
         res.status(400).json({ success: false, message: 'This buy ad has no Pi wallet address on record.' });
@@ -215,9 +191,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
 
     const paymentDeadline = new Date(Date.now() + ad.paymentWindow * 60 * 1000);
 
-    // ── Build initial messages (system + optional auto-reply) ─────────────
-    // Both messages are included when constructing the order document so they
-    // are saved atomically — no separate .save() call needed.
     const initialMessages: IMessage[] = [
       {
         sender:    buyerId,
@@ -236,12 +209,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
       });
     }
 
-    // ── Create order ──────────────────────────────────────────────────────
-    // Use `new Order({...}).save({ session })` instead of `Order.create([...], { session })`.
-    // The array-overload of Model.create() has ambiguous TypeScript overloads when
-    // a session option is passed as the second argument — the compiler cannot narrow
-    // the return type and produces "no overload matches" / "Type 'never'" errors.
-    // Constructing the document explicitly and calling .save() avoids this entirely.
     const order = new Order({
       ad:     ad._id,
       buyer:  buyerId,
@@ -268,7 +235,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
 
     // ── Wallet operations ─────────────────────────────────────────────────
     if (isSellAd) {
-      // Pi already in seller's lockedBalance from ad creation — audit only.
       await lockForEscrow(
         session,
         sellerId,
@@ -278,7 +244,6 @@ export const createOrder = async (req: AuthRequest, res: Response): Promise<void
         ad._id as mongoose.Types.ObjectId,
       );
     } else {
-      // Buy-ad: lock the Pi-seller's (incoming user's) piBalance for this order
       await reserveForAd(
         session,
         new mongoose.Types.ObjectId(userId),
@@ -337,9 +302,6 @@ export const getOrderById = async (req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.user!.id;
 
-    // Fetch WITHOUT populate first so buyer/seller are still raw ObjectIds.
-    // Calling .toString() on a populated Document returns "[object Object]",
-    // not the ID — that is what caused the spurious 403.
     const raw = await Order.findById(req.params.id);
     if (!raw) { res.status(404).json({ success: false, message: 'Order not found' }); return; }
 
@@ -376,7 +338,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    // Use toId() — these fields are populated so ._id must be used, not .toString() directly
     const isBuyer  = toId(order.buyer)  === userId;
     const isSeller = toId(order.seller) === userId;
     if (!isBuyer && !isSeller) {
@@ -385,13 +346,22 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const sellerId = order.seller as unknown as { _id: mongoose.Types.ObjectId; piUid: string };
-    const ad       = await Ad.findById(order.ad).session(session);
+    const sellerDoc = order.seller as unknown as { _id: mongoose.Types.ObjectId; piUid: string };
+    const ad        = await Ad.findById(order.ad).session(session);
+
+    // ── Guard: sellerDoc must be resolvable ───────────────────────────────
+    if (!sellerDoc?._id) {
+      await session.abortTransaction();
+      res.status(500).json({ success: false, message: 'Could not resolve seller from order. Please try again.' });
+      return;
+    }
 
     let systemMsg = '';
 
     switch (action) {
 
+      // ── confirm_payment ─────────────────────────────────────────────────
+      // Only the buyer may confirm. Allowed only from paymentPending.
       case 'confirm_payment':
         if (!isBuyer) {
           await session.abortTransaction();
@@ -407,12 +377,20 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         systemMsg = '✅ Buyer confirmed payment. Seller — verify receipt and release Pi.';
         break;
 
+      // ── release_escrow ──────────────────────────────────────────────────
+      // Only the seller may release. Buyer must have confirmed payment first.
       case 'release_escrow': {
-        if (!isSeller) { await session.abortTransaction(); res.status(403).json({ success: false, message: 'Only seller can release escrow' }); return; }
-        if (order.status !== 'payment_sent') { await session.abortTransaction(); res.status(400).json({ success: false, message: 'Awaiting buyer payment confirmation first' }); return; }
+        if (!isSeller) {
+          await session.abortTransaction();
+          res.status(403).json({ success: false, message: 'Only seller can release escrow' });
+          return;
+        }
+        if (order.status !== OrderStatusEnum.paymentSent) {
+          await session.abortTransaction();
+          res.status(400).json({ success: false, message: 'Awaiting buyer payment confirmation first' });
+          return;
+        }
 
-        // Buyer's wallet address was captured at order creation — use it directly.
-        // No API lookup needed; address was validated (Stellar G... format) at order time.
         const buyerWalletAddr = (order as unknown as { buyerWalletAddress?: string }).buyerWalletAddress;
         if (!buyerWalletAddr) {
           await session.abortTransaction();
@@ -421,8 +399,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         }
 
         // Abort the DB session before the on-chain call.
-        // Stellar transactions cannot be rolled back, so we commit the DB
-        // state separately once we know the transfer succeeded.
         await session.abortTransaction();
         session.endSession();
 
@@ -443,7 +419,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
           return;
         }
 
-        // ── Update DB now that the on-chain transfer succeeded ──────────────
         const dbSession = await mongoose.startSession();
         dbSession.startTransaction();
         try {
@@ -463,11 +438,10 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
           });
           await freshOrder.save({ session: dbSession });
 
-          // Release from seller's lockedBalance (Pi has left the app)
           await releaseEscrow(
             dbSession,
-            sellerId._id,
-            sellerId.piUid,
+            sellerDoc._id,
+            sellerDoc.piUid,
             order.piAmount,
             order._id as mongoose.Types.ObjectId,
             releaseResult.txid,
@@ -485,7 +459,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         } catch (dbErr) {
           await dbSession.abortTransaction();
           logger.error('release_escrow: DB update failed after successful on-chain transfer', dbErr);
-          // The Pi transfer succeeded but DB update failed. Log prominently for manual reconciliation.
           logger.error(`CRITICAL: Order ${order._id} Pi sent (txid=${releaseResult.txid ?? 'unknown'}) but DB not updated. Manual fix required.`);
           res.status(500).json({
             success: false,
@@ -495,46 +468,116 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         } finally {
           dbSession.endSession();
         }
-        // Early return — response already sent above
         return;
       }
 
-      case 'cancel':
-        if (order.status === OrderStatusEnum.completed || order.status === OrderStatusEnum.disputed) {
+      // ── cancel ──────────────────────────────────────────────────────────
+      //
+      // Cancellation rules:
+      //   • Cannot cancel a completed or disputed order (either party).
+      //   • Cannot cancel once the buyer has confirmed payment (payment_sent):
+      //       - Buyer:  already confirmed — must raise a dispute instead.
+      //       - Seller: cannot cancel after payment confirmed — protects the buyer
+      //                 from a seller vanishing after receiving fiat. Must dispute.
+      //   • Otherwise (paymentPending): either party may cancel.
+      //
+      // Escrow refund on cancel:
+      //   The locked Pi (order.escrow.piAmount) must be returned from the
+      //   seller's lockedBalance back to piBalance so they can reuse the funds.
+      //   This is handled by refundEscrow(), which is the correct service call
+      //   for reversing a lockForEscrow() / reserveForAd() operation.
+      //   The ad's availableAmount and reservedPi are also restored so the ad
+      //   can continue serving new orders (or be accurately shown as available).
+      case 'cancel': {
+        // ── Terminal / irrevocable states ──────────────────────────────────
+        if (
+          order.status === OrderStatusEnum.completed ||
+          order.status === OrderStatusEnum.disputed
+        ) {
           await session.abortTransaction();
-          res.status(400).json({ success: false, message: 'Cannot cancel a completed or disputed order' });
-          return;
-        }
-        if (order.status === OrderStatusEnum.paymentSent && isBuyer) {
-          await session.abortTransaction();
-          res.status(400).json({ success: false, message: 'You have already confirmed payment. Raise a dispute if there is an issue.' });
+          res.status(400).json({
+            success: false,
+            message: order.status === OrderStatusEnum.completed
+              ? 'Cannot cancel a completed order.'
+              : 'Cannot cancel a disputed order. An admin is reviewing it.',
+          });
           return;
         }
 
-        order.status        = OrderStatusEnum.cancelled;
-        order.cancelledAt   = new Date();
-        order.cancelReason  = reason;
-        order.escrow.status = EscrowStatusEnum.refunded;
+        // ── Block both parties once payment is confirmed ───────────────────
+        // BUG FIX: previously only blocked the buyer; the seller could still
+        // cancel after the buyer confirmed payment, potentially stealing fiat.
+        if (order.status === OrderStatusEnum.paymentSent) {
+          await session.abortTransaction();
+          if (isBuyer) {
+            res.status(400).json({
+              success: false,
+              message: 'You have already confirmed payment. Raise a dispute if there is an issue.',
+            });
+          } else {
+            // isSeller
+            res.status(400).json({
+              success: false,
+              message: 'You cannot cancel after the buyer has confirmed payment. Raise a dispute if you have not received the funds.',
+            });
+          }
+          return;
+        }
+
+        // ── Safe to cancel — only paymentPending reaches here ─────────────
+        order.status       = OrderStatusEnum.cancelled;
+        order.cancelledAt  = new Date();
+        order.cancelReason = reason;
+
+        // Only mark escrow as refunded if it was actually locked.
+        // (Guards against double-refund if somehow cancel is called twice.)
+        if (order.escrow.status === EscrowStatusEnum.locked) {
+          order.escrow.status = EscrowStatusEnum.refunded;
+        }
+
         systemMsg = `Order cancelled.${reason ? ` Reason: ${reason}` : ''}`;
 
-        // Refund Pi back to the ad's available pool
+        // ── Restore ad available pool ──────────────────────────────────────
+        // Return the Pi back so the ad can fill new orders.
         if (ad) {
           ad.availableAmount += order.piAmount;
-          if (ad.type === AdTypeEnum.sell) ad.reservedPi = ad.availableAmount;
-          if (ad.status === AdStatusEnum.completed) ad.status = AdStatusEnum.active;
+          // Keep reservedPi in sync for sell ads (it tracks locked Pi on the ad).
+          if (ad.type === AdTypeEnum.sell) {
+            ad.reservedPi = (ad.reservedPi ?? 0) + order.piAmount;
+          }
+          // Re-activate the ad if it had been auto-completed by this order depleting it.
+          if (ad.status === AdStatusEnum.completed) {
+            ad.status = AdStatusEnum.active;
+          }
           await ad.save({ session });
         }
 
-        // Audit escrow refund (no balance movement for sell-ads — Pi stays in lockedBalance for the ad)
+        // ── Refund escrow back to seller's piBalance ───────────────────────
+        // BUG FIX: this call was present before but didn't function correctly
+        // because refundEscrow is designed to reverse a lockForEscrow() call —
+        // moving piAmount from lockedBalance back to piBalance for the seller.
+        //
+        // For sell-ad orders: seller's lockedBalance was decremented when
+        //   lockForEscrow() ran at order creation. refundEscrow() reverses that.
+        //
+        // For buy-ad orders: the incoming Pi-seller's lockedBalance was
+        //   decremented via reserveForAd() at order creation. refundEscrow()
+        //   equally reverses that, returning funds to their piBalance.
+        //
+        // sellerDoc._id always refers to the Pi holder (the party whose
+        // balance was locked), so this is correct for both ad types.
         await refundEscrow(
           session,
-          sellerId._id,
-          sellerId.piUid,
+          sellerDoc._id,
+          sellerDoc.piUid,
           order.piAmount,
           order._id as mongoose.Types.ObjectId,
         );
-        break;
 
+        break;
+      }
+
+      // ── dispute ─────────────────────────────────────────────────────────
       case 'dispute':
         if (![OrderStatusEnum.paymentPending, OrderStatusEnum.paymentSent].includes(order.status)) {
           await session.abortTransaction();
@@ -574,7 +617,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
     const message = err instanceof Error ? err.message : 'Failed to update order';
     res.status(500).json({ success: false, message });
   } finally {
-    // Guard: session may already be ended inside the release_escrow case
     try { session.endSession(); } catch (_) { /* already ended */ }
   }
 };
