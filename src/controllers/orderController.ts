@@ -7,7 +7,7 @@ import { AuthRequest } from '../middleware/auth';
 import {
   lockForEscrow,
   releaseEscrow,
-  refundEscrow,
+  refundOrderReservation,
   reserveForAd,
 } from '../services/walletService';
 import { logger }        from '../utils/logger';
@@ -566,7 +566,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response): Promis
         //
         // sellerDoc._id always refers to the Pi holder (the party whose
         // balance was locked), so this is correct for both ad types.
-        await refundEscrow(
+        await refundOrderReservation(
           session,
           sellerDoc._id,
           sellerDoc.piUid,
