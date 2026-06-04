@@ -7,8 +7,6 @@ import {
   reserveForAd,
   adjustAdReservation,
   refundAdReservation,
-  lockForEscrow,
-  refundEscrow,
 } from '../services/walletService';
 import { logger } from '../utils/logger';
 import { AdStatusEnum, AdTypeEnum, CurrencyEnum, OrderStatusEnum, PaymentMethodEnum } from '../models/enum';
@@ -405,9 +403,6 @@ export const deleteAd = async (req: AuthRequest, res: Response): Promise<void> =
     session.endSession();
   }
 };
-
-// ─── Export lockForEscrow / refundEscrow for orderController ─────────────────
-export { lockForEscrow, refundEscrow };
 
 // ─── DELETE /ads/:id/hard ─────────────────────────────────────────────────────
 //

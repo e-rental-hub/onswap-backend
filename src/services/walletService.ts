@@ -334,15 +334,22 @@ export async function releaseEscrow(
  * No ledger entry needed here — the Pi never left lockedBalance for this order.
  * This is intentionally a no-op on balances; audit row written for completeness.
  */
-export async function refundEscrow(
+export async function refundOrderReservation(
   session: ClientSession,
   userId:  Types.ObjectId,
   userUid: string,
   amount:  number,
   orderId: Types.ObjectId,
 ): Promise<void> {
+  if (amount <= 0) return;
+
   const user = await User.findById(userId).session(session);
   if (!user) throw new Error('User not found');
+
+  // Never let lockedBalance go negative — guard against accounting drift
+  user.lockedBalance   = r4(Math.max(0, user.lockedBalance - amount));
+  user.piBalance       = r4(user.piBalance + amount);
+  await user.save({ session });
 
   // Pi stays in lockedBalance — just restore it to the ad pool (handled in orderController)
   await recordTx(session, {
