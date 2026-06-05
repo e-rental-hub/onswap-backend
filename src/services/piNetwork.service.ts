@@ -352,3 +352,18 @@ export async function releaseToUser(
     return { success: false, recipientAddress: buyerWalletAddress, txid, error };
   }
 }
+
+export async function isPiWalletActivated(walletAddress: string): Promise<boolean> {
+  try {
+    await horizonServer.loadAccount(walletAddress);
+    // logger.info(`[Pi] Wallet activated: ${walletAddress}`);
+    return true;
+  } catch (err: any) {
+    if (err?.response?.status === 404 || err?.name === 'NotFoundError') {
+      // logger.warn(`[Pi] Wallet not activated: ${walletAddress}`);
+      return false;
+    }
+    logPlatformError(err, `isPiWalletActivated(${walletAddress})`);
+    throw err;
+  }
+}

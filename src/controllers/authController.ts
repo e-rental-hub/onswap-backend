@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import jwt, { SignOptions }  from 'jsonwebtoken';
 import type { StringValue }  from 'ms';
 import { User, IUserAccountDetailDoc, IPiWalletAddressDoc } from '../models/User';
-import { verifyPiToken }     from '../services/piNetwork.service';
+import { isPiWalletActivated, verifyPiToken }     from '../services/piNetwork.service';
 import { AuthRequest }       from '../middleware/auth';
 import { logger }            from '../utils/logger';
 import { config } from '../config';
@@ -307,6 +307,12 @@ export const addPiWalletAddress = async (req: AuthRequest, res: Response): Promi
 
     if (!STELLAR_RE.test(address.trim())) {
       res.status(400).json({ success: false, message: 'Invalid Pi wallet address — must start with G and be 56 characters' });
+      return;
+    }
+
+    // Check if address is activated on Pi blockchain before saving:
+    if (!await isPiWalletActivated(address.trim())) {
+      res.status(400).json({ success: false, message: 'Recipient wallet is not activated on Pi blockchain' });
       return;
     }
 
