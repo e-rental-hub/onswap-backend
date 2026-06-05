@@ -6,6 +6,7 @@ import { CurrencyEnum, PaymentMethodEnum } from './enum';
 export interface IUserAccountDetail {
   _id: Types.ObjectId;
   type: PaymentMethodEnum;
+  currency: CurrencyEnum;
   label: string;
   accountName: string;
   accountNumber: string;
@@ -18,11 +19,8 @@ export type IUserAccountDetailDoc = IUserAccountDetail & Types.Subdocument;
 
 export const UserAccountDetailSchema = new Schema<IUserAccountDetailDoc>(
   {
-    type: {
-      type: String,
-      enum: PaymentMethodEnum,
-      required: true,
-    },
+    type: { type: String, enum: PaymentMethodEnum, required: true},
+    currency: { type: String, enum: CurrencyEnum, default: CurrencyEnum.NGN },
     label:         { type: String, required: true, trim: true, maxlength: 60 },
     accountName:   { type: String, required: true, trim: true, maxlength: 80 },
     accountNumber: { type: String, required: true, trim: true, maxlength: 20 },

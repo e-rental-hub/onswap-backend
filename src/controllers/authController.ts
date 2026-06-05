@@ -171,6 +171,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
 /** GET /api/v1/auth/account-details */
 export const getuserAccountDetails = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const {currency} = req.query as { currency?: CurrencyEnum };
     const user = await User.findById(req.user!.id).select('userAccountDetails');
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
     res.json({ success: true, userAccountDetails: user.userAccountDetails });
@@ -186,19 +187,19 @@ export const addUserAccountDetail = async (req: AuthRequest, res: Response): Pro
     const user = await User.findById(req.user!.id);
     if (!user) { res.status(404).json({ success: false, message: 'User not found' }); return; }
 
-    const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
+    const { type, currency, label, accountName, accountNumber, bankName, isDefault } = req.body;
     logger.info(`Adding user account detail for ${user.username}: ${type} ${accountNumber}`);
 
     if (isDefault) user.userAccountDetails.forEach((pm) => { pm.isDefault = false; });
 
     const exists = user.userAccountDetails.some(
-      (pm) => pm.type === type && pm.accountNumber === accountNumber
+      (pm) => pm.type === type && pm.accountNumber === accountNumber && pm.bankName === bankName && pm.currency === currency
     );
     if (exists) { res.status(409).json({ success: false, message: 'This account is already saved' }); return; }
 
     const shouldBeDefault = isDefault || user.userAccountDetails.length === 0;
     user.userAccountDetails.push({
-      type, label, accountName, accountNumber, bankName,
+      type, currency, label, accountName, accountNumber, bankName,
       isDefault: shouldBeDefault,
       createdAt: new Date(),
     } as IUserAccountDetailDoc);
@@ -221,9 +222,10 @@ export const updateUserAccountDetail = async (req: AuthRequest, res: Response): 
     const pm = user.userAccountDetails.id(req.params.pmId);
     if (!pm) { res.status(404).json({ success: false, message: 'User account detail not found' }); return; }
 
-    const { type, label, accountName, accountNumber, bankName, isDefault } = req.body;
+    const { type, currency, label, accountName, accountNumber, bankName, isDefault } = req.body;
     if (isDefault) user.userAccountDetails.forEach((p) => { p.isDefault = false; });
     if (type          !== undefined) pm.type          = type;
+    if (currency      !== undefined) pm.currency      = currency;
     if (label         !== undefined) pm.label         = label;
     if (accountName   !== undefined) pm.accountName   = accountName;
     if (accountNumber !== undefined) pm.accountNumber = accountNumber;

@@ -5,6 +5,7 @@ import { AdTypeEnum, CurrencyEnum, PaymentMethodEnum } from '../models/enum';
 
 export const paymentMethodDetailSchema = z.object({
   type:          z.nativeEnum(PaymentMethodEnum),
+  currency:      z.nativeEnum(CurrencyEnum).default(CurrencyEnum.NGN),
   label:         z.string().min(1).max(60),
   accountName:   z.string().min(1).max(80),
   accountNumber: z.string().min(1).max(20),
