@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { logger } from './utils/logger';
 import routes from './routes';
 import cookieParser from 'cookie-parser';
+import { initFirebase } from "./services/notification.service";
+import notificationRoutes from "./routes/notification.routes";
 
 dotenv.config();
 
@@ -26,6 +28,7 @@ app.use((req, _res, next) => {
 
 // Routes
 app.use('/api/v1', routes);
+app.use("/notifications", notificationRoutes);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -39,7 +42,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
-// Connect and start
+// ── Firebase + MongoDB init ────────────────────────────────────────────────────
+initFirebase();
 mongoose
   .connect(MONGO_URI)
   .then(() => {
