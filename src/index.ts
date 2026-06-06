@@ -28,7 +28,7 @@ app.use((req, _res, next) => {
 
 // Routes
 app.use('/api/v1', routes);
-app.use("/notifications", notificationRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

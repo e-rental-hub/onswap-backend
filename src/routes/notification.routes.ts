@@ -13,13 +13,13 @@ import {
   getTokensForUsers,
 } from "../models/deviceToken.model";
 
-const router = Router();
+const notificationRoutes = Router();
 
 // ─── 1. Register / refresh a device token ────────────────────────────────────
 // Called by the frontend after the user grants notification permission.
 // POST /notifications/token
 // Body: { userId, fcmToken, platform? }
-router.post("/token", async (req: Request, res: Response) => {
+notificationRoutes.post("/token", async (req: Request, res: Response) => {
   const { userId, fcmToken, platform } = req.body;
 
   if (!userId || !fcmToken) {
@@ -38,7 +38,7 @@ router.post("/token", async (req: Request, res: Response) => {
 // ─── 2. Remove a device token (logout / revoke) ───────────────────────────────
 // DELETE /notifications/token
 // Body: { fcmToken }
-router.delete("/token", async (req: Request, res: Response) => {
+notificationRoutes.delete("/token", async (req: Request, res: Response) => {
   const { fcmToken } = req.body;
   if (!fcmToken) return res.status(400).json({ error: "fcmToken required" });
 
@@ -54,7 +54,7 @@ router.delete("/token", async (req: Request, res: Response) => {
 // ─── 3. Notify a single user (all their devices) ─────────────────────────────
 // POST /notifications/user/:userId
 // Body: { title, body, data?, imageUrl? }
-router.post("/user/:userId", async (req: Request, res: Response) => {
+notificationRoutes.post("/user/:userId", async (req: Request, res: Response) => {
   const { userId } = req.params;
   const payload: PushPayload = req.body;
 
@@ -81,7 +81,7 @@ router.post("/user/:userId", async (req: Request, res: Response) => {
 // ─── 4. Notify multiple users at once ────────────────────────────────────────
 // POST /notifications/users
 // Body: { userIds: string[], title, body, data?, imageUrl? }
-router.post("/users", async (req: Request, res: Response) => {
+notificationRoutes.post("/users", async (req: Request, res: Response) => {
   const { userIds, ...payload }: { userIds: string[] } & PushPayload = req.body;
 
   if (!Array.isArray(userIds) || !userIds.length) {
@@ -105,7 +105,7 @@ router.post("/users", async (req: Request, res: Response) => {
 // ─── 5. Broadcast to a topic ──────────────────────────────────────────────────
 // POST /notifications/topic/:topic
 // Body: { title, body, data?, imageUrl? }
-router.post("/topic/:topic", async (req: Request, res: Response) => {
+notificationRoutes.post("/topic/:topic", async (req: Request, res: Response) => {
   const { topic } = req.params;
   const payload: PushPayload = req.body;
 
@@ -123,7 +123,7 @@ router.post("/topic/:topic", async (req: Request, res: Response) => {
 });
 
 // Quick one-off test route — remove after testing
-router.post("/notifications/test-login", async (req, res) => {
+notificationRoutes.post("/test-login", async (req, res) => {
   const { userId } = req.body;
   const tokens = await getTokensForUser(userId);
 
@@ -140,4 +140,4 @@ router.post("/notifications/test-login", async (req, res) => {
   return res.json({ tokens, result });
 });
 
-export default router;
+export default notificationRoutes;
