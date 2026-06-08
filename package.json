@@ -17,7 +17,6 @@
     "dotenv": "^16.4.5",
     "ed25519-hd-key": "^2.0.0",
     "express": "^4.19.2",
-    "firebase-admin": "^13.10.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.6.2",
     "stellar-sdk": "^13.3.0",
